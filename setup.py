@@ -13,17 +13,17 @@ with open(package_init, "r", encoding="utf-8") as f:
             version = line.split('=')[1].strip().strip('"\'')
             break
     else:
-        version = "0.2.0"
+        version = "0.1.0"
 
 setup(
     name="api-scanner",
     version=version,
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Tisone Kironget",
+    author_email="tisonkironget@gmail.com",
     description="A tool for intercepting and analyzing API requests",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/api-scanner",
+    url="https://github.com/TisoneK/api-scanner",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     classifiers=[

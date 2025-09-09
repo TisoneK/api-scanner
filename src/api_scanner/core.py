@@ -35,7 +35,9 @@ class ApiSniffer:
     """
     A mitmproxy addon to capture, analyze, and log API requests and responses.
     """
-    def __init__(self):
+    def __init__(self, host: str = None, port: int = None, 
+                 ssl_verify: bool = None, output: str = None,
+                 filter_file: str = None):
         self.api_calls: List[ApiCall] = []
         self.request_count = 0
         self.filtered_count = 0
@@ -43,6 +45,19 @@ class ApiSniffer:
         self.shutdown_callbacks = []
         self.request_map: Dict[str, Dict] = {}  # Maps request_id to request data
         self.logger = logging.getLogger(__name__ + '.ApiSniffer')
+        self.host = host or PROXY_HOST
+        self.port = port or PROXY_PORT
+        self.ssl_verify = ssl_verify if ssl_verify is not None else SSL_VERIFY
+        self.output = output or str(OUTPUT_FILE)
+        self._shutdown_event = asyncio.Event()
+        
+        # Load custom filter keywords if provided, otherwise use defaults
+        if filter_file:
+            from .config.filters import load_filter_keywords
+            self.filter_keywords = load_filter_keywords(filter_file)
+        else:
+            from .config.filters import FILTER_KEYWORDS
+            self.filter_keywords = FILTER_KEYWORDS
         
     def add_shutdown_callback(self, callback: Callable[[], None]) -> None:
         """Add a callback to be called on shutdown."""
@@ -69,7 +84,7 @@ class ApiSniffer:
             
         # Check if any of the filter keywords are in the URL
         url = flow.request.pretty_url.lower()
-        return any(keyword.lower() in url for keyword in FILTER_KEYWORDS)
+        return any(keyword.lower() in url for keyword in self.filter_keywords)
     
     def get_content_type(self, message) -> Optional[str]:
         """Extract and return the content type from a message."""
@@ -239,6 +254,76 @@ class ApiSniffer:
         except Exception as e:
             logger.error(f"Error saving API calls to file: {e}", exc_info=True)
     
+    async def start(self):
+        """Start the proxy server."""
+        from mitmproxy.tools.dump import DumpMaster
+        from mitmproxy import options
+        
+        # Set up mitmproxy options
+        opts = options.Options(
+            listen_host=self.host,
+            listen_port=self.port,
+            ssl_insecure=not self.ssl_verify,
+        )
+        
+        # Create and configure the proxy server
+        m = DumpMaster(opts)
+        m.addons.add(self)
+        
+        # Set up signal handlers for graceful shutdown
+        def signal_handler(sig, frame):
+            self.logger.info("\nReceived shutdown signal. Initiating graceful shutdown...")
+            asyncio.create_task(self._graceful_shutdown(m))
+            
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, signal_handler)
+            except (ValueError, RuntimeError) as e:
+                self.logger.warning(f"Could not set signal handler for {sig}: {e}")
+        
+        try:
+            # Start the proxy server
+            self.logger.info(f"Starting API Scanner on http://{self.host}:{self.port}")
+            self.logger.info("Press Ctrl+C to stop")
+            
+            await m.run()
+            await self._shutdown_event.wait()
+            
+        except asyncio.CancelledError:
+            await self._graceful_shutdown(m)
+        except Exception as e:
+            self.logger.error(f"Error in proxy server: {e}", exc_info=True)
+            await self._graceful_shutdown(m)
+        finally:
+            if m.running:
+                m.shutdown()
+    
+    async def _graceful_shutdown(self, master):
+        """Perform graceful shutdown of the proxy server."""
+        if not hasattr(self, '_shutdown_initiated'):
+            self._shutdown_initiated = True
+            self.logger.info("\nShutting down gracefully. Please wait...")
+            
+            # Signal to stop processing new requests
+            self.should_exit = True
+            
+            # Call all registered shutdown callbacks
+            for callback in self.shutdown_callbacks:
+                try:
+                    if asyncio.iscoroutinefunction(callback):
+                        await callback()
+                    else:
+                        callback()
+                except Exception as e:
+                    self.logger.error(f"Error in shutdown callback: {e}", exc_info=True)
+            
+            # Save any remaining API calls
+            if self.api_calls:
+                self._save_to_file()
+            
+            # Signal that shutdown is complete
+            self._shutdown_event.set()
+    
     def done(self) -> None:
         """Called when the proxy shuts down."""
         try:
@@ -247,29 +332,40 @@ class ApiSniffer:
                 self._save_to_file()
                 
             # Log summary
-            logger.info("\n" + "=" * 80)
-            logger.info(f"API Scan Complete")
-            logger.info("-" * 80)
-            logger.info(f"Total Requests: {self.request_count}")
-            logger.info(f"Filtered Requests: {self.filtered_count}")
-            logger.info(f"Captured API Calls: {len(self.api_calls)}")
+            self.logger.info("\n" + "=" * 80)
+            self.logger.info(f"API Scan Complete")
+            self.logger.info("-" * 80)
+            self.logger.info(f"Total Requests: {self.request_count}")
+            self.logger.info(f"Filtered Requests: {self.filtered_count}")
+            self.logger.info(f"Captured API Calls: {len(self.api_calls)}")
             
             # Calculate and log statistics
             if self.api_calls:
-                total_time = sum(call.response.response_time_ms for call in self.api_calls)
-                avg_time = total_time / len(self.api_calls)
-                
-                logger.info(f"Average Response Time: {avg_time:.2f}ms")
+                # Calculate average response time
+                total_time = sum(call.response.response_time_ms for call in self.api_calls if call.response)
+                avg_time = total_time / len([c for c in self.api_calls if c.response]) if self.api_calls else 0
+                self.logger.info(f"Average Response Time: {avg_time:.2f}ms")
                 
                 # Count status codes
                 status_codes = {}
                 for call in self.api_calls:
-                    status = call.response.status_code
-                    status_codes[status] = status_codes.get(status, 0) + 1
+                    if call.response:
+                        status = call.response.status_code
+                        status_codes[status] = status_codes.get(status, 0) + 1
                 
-                logger.info("\nStatus Codes:")
+                self.logger.info("\nStatus Codes:")
                 for code, count in sorted(status_codes.items()):
-                    logger.info(f"  - {code}: {count}")
+                    self.logger.info(f"  - {code}: {count}")
+                
+                # Count HTTP methods
+                methods = {}
+                for call in self.api_calls:
+                    method = call.request.method
+                    methods[method] = methods.get(method, 0) + 1
+                
+                self.logger.info("\nHTTP Methods:")
+                for method, count in sorted(methods.items()):
+                    self.logger.info(f"  - {method}: {count}")
                 
                 # Count domains
                 domains = {}
@@ -277,11 +373,11 @@ class ApiSniffer:
                     domain = urlparse(call.request.url).netloc
                     domains[domain] = domains.get(domain, 0) + 1
                 
-                logger.info("\nTop Domains:")
+                self.logger.info("\nTop Domains:")
                 for domain, count in sorted(domains.items(), key=lambda x: x[1], reverse=True)[:5]:
-                    logger.info(f"  - {domain}: {count}")
+                    self.logger.info(f"  - {domain}: {count}")
                 
-            logger.info("=" * 80)
+            self.logger.info("=" * 80)
             
         except Exception as e:
-            logger.error(f"Error during shutdown: {e}", exc_info=True)
+            self.logger.error(f"Error during shutdown: {e}", exc_info=True)

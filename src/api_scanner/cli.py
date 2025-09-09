@@ -17,19 +17,43 @@ from .config.config import (
 
 def parse_args(args=None):
     """Parse command line arguments."""
+    def parse_host_port(host_str):
+        """Parse host:port format and return (host, port) tuple."""
+        if ':' in host_str:
+            host, port = host_str.rsplit(':', 1)
+            try:
+                return host, int(port)
+            except ValueError:
+                raise argparse.ArgumentTypeError(f"Invalid port number: {port}")
+        return host_str, PROXY_PORT or 8080
+
     parser = argparse.ArgumentParser(description='API Scanner - A tool for intercepting and analyzing API requests')
-    parser.add_argument('--host', type=str, default=PROXY_HOST or '127.0.0.1',
-                      help=f'Proxy host to listen on (default: {PROXY_HOST or "127.0.0.1"})')
-    parser.add_argument('--port', type=int, default=PROXY_PORT or 8080,
-                      help=f'Proxy port to listen on (default: {PROXY_PORT or 8080})')
-    parser.add_argument('--no-ssl-verify', action='store_true',
-                      help='Disable SSL certificate verification')
-    parser.add_argument('--output', type=str, default=str(OUTPUT_FILE),
-                      help=f'Output file path (default: {OUTPUT_FILE})')
-    parser.add_argument('--log-level', type=str, default=LOG_LEVEL,
-                      help=f'Logging level (default: {LOG_LEVEL})')
+    parser.add_argument('-v', '--version', action='version', version='%(prog)s 0.1.0')
     
-    return parser.parse_args(args)
+    # Add a special argument for host:port format
+    parser.add_argument('--bind', type=parse_host_port, metavar='HOST:PORT',
+                      help=f'Bind address in format host:port (overrides --host and --port)')
+    
+    # Keep the original arguments for backward compatibility
+    parser.add_argument('-H', '--host', type=str, default=PROXY_HOST or '127.0.0.1',
+                      help=f'Proxy host to listen on (default: {PROXY_HOST or "127.0.0.1"})')
+    parser.add_argument('-p', '--port', type=int, default=PROXY_PORT or 8080,
+                      help=f'Proxy port to listen on (default: {PROXY_PORT or 8080})')
+    parser.add_argument('-k', '--no-ssl-verify', action='store_true',
+                      help='Disable SSL certificate verification (insecure)')
+    parser.add_argument('-o', '--output', type=str, default=str(OUTPUT_FILE),
+                      help=f'Output file path (default: {OUTPUT_FILE})')
+    parser.add_argument('-l', '--log-level', type=str, default=LOG_LEVEL,
+                      help=f'Logging level: DEBUG, INFO, WARNING, ERROR (default: {LOG_LEVEL})')
+    
+    # Parse the arguments
+    parsed_args = parser.parse_args(args)
+    
+    # If --bind was used, it overrides --host and --port
+    if parsed_args.bind:
+        parsed_args.host, parsed_args.port = parsed_args.bind
+    
+    return parsed_args
 
 async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: int = None, 
                ssl_verify: bool = None, output: str = None) -> None:

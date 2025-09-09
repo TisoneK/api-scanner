@@ -33,7 +33,7 @@ A powerful Python tool for intercepting, analyzing, and documenting API requests
 2. **Or install from source**:
    ```bash
    # Clone the repository
-   git clone https://github.com/yourusername/api-scanner.git
+   git clone https://github.com/TisoneK/api-scanner.git
    cd api-scanner
    
    # Install in development mode
@@ -50,27 +50,64 @@ Start the API scanner with default settings:
 api-scanner
 ```
 
-### Common Options:
+Customize the proxy settings (using both short and long forms):
+```bash
+# Long form
+api-scanner --host 0.0.0.0 --port 8081 --output custom_output.json
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--host` | Host to bind the proxy | `127.0.0.1` |
-| `--port` | Port to run the proxy | `8080` |
-| `--output` | Output file path | `captured_apis.json` |
-| `--no-ssl-verify` | Disable SSL verification | `False` |
-| `--log-level` | Logging level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
+# Short form equivalent
+api-scanner -H 0.0.0.0 -p 8081 -o custom_output.json
+```
 
-### Examples:
+Disable SSL verification (for testing only):
+```bash
+# Long form
+api-scanner --no-ssl-verify
+
+# Short form equivalent
+api-scanner -k
+```
+
+Set log level to debug:
+```bash
+# Long form
+api-scanner --log-level DEBUG
+
+# Short form equivalent
+api-scanner -l DEBUG
+```
+
+### Command-line Options
+
+| Short | Long | Description |
+|-------|------|-------------|
+| `-v` | `--version` | Show program's version number and exit |
+|  | `--bind HOST:PORT` | Bind address in format host:port (overrides --host/--port) |
+| `-H` | `--host` | Proxy host to listen on (default: 127.0.0.1) |
+| `-p` | `--port` | Proxy port to listen on (default: 8080) |
+| `-k` | `--no-ssl-verify` | Disable SSL certificate verification |
+| `-o` | `--output` | Output file path (default: captured_apis.json) |
+| `-l` | `--log-level` | Logging level: DEBUG, INFO, WARNING, ERROR (default: INFO) |
+
+### Examples
 
 ```bash
-# Run on a specific port
-api-scanner --port 8081
+# Show version
+api-scanner --version
+# or
+api-scanner -v
 
-# Save output to a custom file
-api-scanner --output my_apis.json
+# Using separate host and port
+api-scanner -H 0.0.0.0 -p 8080
 
-# Disable SSL verification (for testing only)
-api-scanner --no-ssl-verify
+# Using combined host:port format
+api-scanner --bind 0.0.0.0:8080
+
+# With all options using short forms
+api-scanner -H 0.0.0.0 -p 8080 -o my_apis.json -l DEBUG
+
+# Using host:port with other options
+api-scanner --bind 0.0.0.0:8080 -o my_apis.json -l DEBUG
 ```
 
 ## 📚 Library Usage
@@ -79,121 +116,134 @@ Integrate the API scanner directly into your Python projects:
 
 ```python
 import asyncio
-from api_scanner import ApiSniffer, start
+from api_scanner import ApiSniffer
 
 async def main():
-    # Initialize the sniffer
-    sniffer = ApiSniffer()
+    # Initialize and configure the scanner
+    scanner = ApiSniffer(
+        host="127.0.0.1",
+        port=8080,
+        ssl_verify=True,
+        output="api_captures.json"
+    )
     
     try:
         # Start the proxy server
-        await start(
-            sniffer,
-            host="127.0.0.1",
-            port=8080,
-            ssl_verify=True,
-            output="api_captures.json"
-        )
+        print("Starting API Scanner. Press Ctrl+C to stop...")
+        await scanner.start()
         
-        # Access captured API calls
-        for call in sniffer.api_calls:
-            print(f"[{call.timestamp}] {call.request.method} {call.request.url} -> {call.response.status_code}")
-            
     except KeyboardInterrupt:
-        print("\nShutting down gracefully...")
+        print("\nShutting down...")
     finally:
-        print(f"Captured {len(sniffer.api_calls)} API calls")
+        # Access captured API calls
+        for call in scanner.api_calls:
+            print(f"[{call.request.timestamp}] {call.request.method} {call.request.url} -> {call.response.status_code if call.response else 'No response'}")
+        print(f"\nCaptured {len(scanner.api_calls)} API calls")
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## ⚙️ Configuration
+## 🛠️ Configuration Options
 
-API Scanner can be configured through multiple methods (in order of priority):
+Customize the scanner's behavior using command-line arguments or a configuration file.
 
-### 1. Command Line Arguments
-```bash
-api-scanner --host 0.0.0.0 --port 8081 --output custom_output.json
-```
+### 🔍 Configuring API Filters
 
-### 2. Environment Variables
+You can customize which API endpoints are captured by editing the filter configuration file. The scanner includes a default set of common API patterns, but you can easily add your own.
+
+1. **Default Filter Location**:
+   ```
+   src/api_scanner/config/filter.txt
+   ```
+
+2. **Filter File Format**:
+   - Each line represents a pattern to match against API endpoints
+   - Lines starting with `#` are treated as comments
+   - Patterns are matched against the URL path
+   - Simple wildcard matching is supported
+
+3. **Example Filter Configuration**:
+   ```
+   # Common API versioning patterns
+   /api/
+   /v1/
+   
+   # Specific endpoints
+   /auth/
+   /users/
+   
+   # Wildcard example (matches any path containing 'payment')
+   *payment*
+   ```
+
+4. **Using a Custom Filter File**:
+   ```bash
+   api-scanner --filter /path/to/your/custom-filter.txt
+   ```
+
+   Or in your Python code:
+   ```python
+   from api_scanner import ApiSniffer
+   import asyncio
+   
+   async def main():
+       # Initialize scanner with custom filter file
+       scanner = ApiSniffer(
+           host="127.0.0.1",
+           port=8080,
+           ssl_verify=True,
+           output="api_captures.json",
+           filter_file='/path/to/your/custom-filter.txt'
+       )
+       
+       try:
+           print("Starting API Scanner. Press Ctrl+C to stop...")
+           await scanner.start()
+       except KeyboardInterrupt:
+           print("\nShutting down...")
+       finally:
+           print(f"Captured {len(scanner.api_calls)} API calls")
+   
+   if __name__ == "__main__":
+       asyncio.run(main())
+   ```
+
+5. **Best Practices**:
+   - Keep your filter patterns specific to avoid capturing unnecessary traffic
+   - Group related endpoints together with comments
+   - Test new patterns with the `--verbose` flag to see what's being captured
+   - Consider versioning your filter file if you maintain different sets of filters
+
+## ⚙️ Advanced Configuration
+
+### Environment Variables
+
+You can also configure the scanner using environment variables:
+
 ```bash
 export API_SCANNER_HOST=0.0.0.0
-export API_SCANNER_PORT=8081
-export API_SCANNER_OUTPUT=my_apis.json
+export API_SCANNER_PORT=8080
 export API_SCANNER_SSL_VERIFY=false
-export API_SCANNER_LOG_LEVEL=DEBUG
+export API_SCANNER_OUTPUT=my_captures.json
+api-scanner
 ```
 
-### 3. Config File (`config/config.json`)
-Create a `config.json` file:
+### Configuration File
+
+Create a `config.json` file in your working directory:
+
 ```json
 {
-  "proxy": {
-    "host": "127.0.0.1",
-    "port": 8080,
-    "ssl_verify": true
-  },
-  "output": {
-    "directory": "output",
-    "filename": "captured_apis.json"
-  },
-  "filters": {
-    "excluded_extensions": [".js", ".css", ".png", ".jpg", ".svg"],
-    "excluded_paths": ["/static/", "/assets/", "/favicon.ico"],
-    "keywords": ["api", "v1", "v2", "graphql", "rest"]
-  },
-  "logging": {
-    "level": "INFO",
-    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  }
-}
-```
-
-## 📊 Output Format
-
-Captured API data is saved in a structured JSON format:
-
-```json
-[
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "timestamp": "2025-09-08T12:34:56.789012+03:00",
-    "request": {
-      "method": "GET",
-      "url": "https://api.example.com/v1/users?limit=10",
-      "headers": {
-        "User-Agent": "python-requests/2.28.1",
-        "Accept": "application/json"
-      },
-      "query_params": {
-        "limit": ["10"]
-      },
-      "body": null
+    "proxy": {
+        "host": "0.0.0.0",
+        "port": 8080,
+        "ssl_verify": false
     },
-    "response": {
-      "status_code": 200,
-      "reason": "OK",
-      "headers": {
-        "Content-Type": "application/json",
-        "Content-Length": "1234"
-      },
-      "body": {
-        "users": [
-          {"id": 1, "name": "John Doe"},
-          {"id": 2, "name": "Jane Smith"}
-        ]
-      },
-      "response_time_ms": 123.45
-    },
-    "metadata": {
-      "content_type": "application/json",
-      "is_json": true,
-      "is_xml": false
+    "output": {
+        "filename": "my_captures.json"
     }
-  }
-]
+}
 ```
 
 ## 🤝 Contributing
@@ -209,9 +259,3 @@ Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTIN
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with ❤️ using Python
-- Powered by [mitmproxy](https://mitmproxy.org/)
-- Inspired by various API debugging tools

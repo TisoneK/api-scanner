@@ -5,18 +5,20 @@ This package provides a mitmproxy-based tool for intercepting, analyzing, and lo
 API requests and responses. It can be used both as a command-line tool and as a library.
 
 Example usage:
-    >>> from api_scanner import ApiSniffer, start
-    >>> sniffer = ApiSniffer()
-    >>> # Run the proxy server
+    >>> from api_scanner import ApiSniffer
     >>> import asyncio
-    >>> asyncio.run(start(sniffer, host="127.0.0.1", port=8080))
+    >>> 
+    >>> # Create and start the scanner
+    >>> scanner = ApiSniffer(host="127.0.0.1", port=8080)
+    >>> asyncio.run(scanner.start())
+    >>> 
     >>> # Access captured API calls
-    >>> for call in sniffer.api_calls:
-    ...     print(f"{call.request.method} {call.request.url}")
+    >>> for call in scanner.api_calls:
+    ...     print(f"{call.request.method} {call.request.url} -> {call.response.status_code if call.response else 'No response'}")
 """
 
 from .core import ApiSniffer
-from .cli import main, start
+from .cli import main
 from .config import (
     PROXY_HOST, PROXY_PORT, SSL_VERIFY,
     OUTPUT_FILE, OUTPUT_DIR, LOG_LEVEL, MAX_CONTENT_LENGTH,
@@ -24,17 +26,19 @@ from .config import (
 )
 from .models import ApiCall, RequestData, ResponseData
 
-__version__ = "0.2.0"
+__version__ = "0.1.0"
 __all__ = [
-    # Main classes
+    # Main class
     'ApiSniffer',
+    
+    # Data models
     'ApiCall', 'RequestData', 'ResponseData',
     
-    # Functions
-    'main', 'start',
+    # CLI
+    'main',
     
     # Configuration
-    'OUTPUT_FILE', 'OUTPUT_DIR', 'MAX_CONTENT_LENGTH', 'LOG_LEVEL',
+    'OUTPUT_FILE', 'OUTPUT_DIR', 'LOG_LEVEL',
     'PROXY_HOST', 'PROXY_PORT', 'SSL_VERIFY',
     'EXCLUDED_EXTENSIONS', 'EXCLUDED_PATHS', 'FILTER_KEYWORDS'
 ]

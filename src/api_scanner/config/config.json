@@ -1,0 +1,36 @@
+{
+    "proxy": {
+        "host": "127.0.0.1",
+        "port": 8080
+    },
+    "logging": {
+        "level": "INFO",
+        "max_file_size_mb": 10,
+        "backup_count": 5
+    },
+    "output": {
+        "directory": "output",
+        "filename": "captured_apis.json"
+    },
+    "filters": {
+        "excluded_extensions": [
+            ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", 
+            ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp", ".avif", 
+            ".mp4", ".webm", ".mp3", ".wav", ".ogg", ".pdf", ".zip", 
+            ".gz", ".tar", ".rar", ".7z", ".exe", ".dmg", ".pkg", 
+            ".deb", ".rpm", ".msi", ".apk", ".app", ".dll", ".so", 
+            ".dylib", ".py", ".pyc", ".pyo", ".pyd", ".c", ".cpp", 
+            ".h", ".java", ".class", ".html", ".htm", ".php", ".asp", 
+            ".aspx", ".jsp", ".json", ".xml", ".txt"
+        ],
+        "excluded_paths": [
+            "/static/", "/assets/", "/public/", "/resources/", 
+            "/images/", "/img/", "/css/", "/js/", "/fonts/", 
+            "/vendor/", "/node_modules/", "/bower_components/",
+            "/favicon.ico", "/robots.txt", "/sitemap.xml", 
+            "/manifest.json", "/sw.js", "/service-worker.js",
+            "/workbox-", "/__", "/_next/", "/_nuxt/", "/_astro/",
+            "/.well-known/", "/.git/", "/.vscode/", "/.idea/", "/.github/"
+        ]
+    }
+}

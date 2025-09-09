@@ -1,0 +1,41 @@
+# API Patterns to include (one per line)
+# These patterns will be used to identify API endpoints
+# Lines starting with # are comments and will be ignored
+
+# Common API versioning patterns
+/api/
+/v1/
+/v2/
+/v3/
+/rest/
+/graphql
+/rpc/
+/grpc/
+
+# Common API endpoints
+/auth/
+/token
+/login
+/register
+/user/
+/users/
+/account/
+/data/
+/dataset/
+/resources/
+/records/
+/items/
+/entities/
+/objects/
+/search
+/query
+/report
+/export
+/import
+
+# Service endpoints
+/service/
+/service-api/
+/backend/
+/internal/
+/external/

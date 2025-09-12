@@ -121,6 +121,15 @@ api-scanner --bind 0.0.0.0:8080 -o my_apis.json -l DEBUG
 api-scanner google.com facebook.com
 ```
 
+#### Important Note About Browser Caching
+
+To avoid duplicate API calls from browser cache, follow this workflow:
+1. First, close all browser windows completely
+2. Start the API scanner with your desired parameters
+3. Only then open your browser and navigate to the target site
+
+This prevents the browser from sending cached API responses when the proxy starts, which can result in duplicate entries in your capture file.
+
 - Or pass a single file path with one domain per line (lines starting with `#` are ignored):
 ```bash
 api-scanner allowed_list.txt

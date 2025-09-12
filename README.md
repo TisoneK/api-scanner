@@ -132,15 +132,26 @@ api-scanner --filter C:\path\to\filter.txt api.example.com
 api-scanner --allow-host auth.example.com domains.lst
 ```
 
-#### Allowlist notes
+#### Allowlist Notes
 
-- When you pass domains (via positional args or a file), the scanner captures all non-static requests for those hosts. Keyword filters are not required for allowed hosts.
+- When you pass domains (via positional args or a file), the scanner captures all non-static requests for those exact hosts. 
+  - Example: Allowing `google.com` will capture `https://google.com/api` but not `https://api.google.com` or `https://googleapis.com`
+  - For comprehensive coverage, you may need to explicitly list all related domains
+
+- If you need to capture all API traffic (including cross-domain requests), run without allowlist filtering:
+  ```bash
+  api-scanner
+  ```
+  Then use `--filter` to narrow down results if needed
+
 - If you pass both an allowlist and `--filter`, the host allowlist takes precedence (filter keywords still apply when no allowlist is provided).
-- Proxy logs may show connections to other domains from your browser, but only allowed hosts are written to the JSON output.
+
+- Note: Future versions will include enhanced domain matching with wildcard support (e.g., `*.google.com`) and related domain detection.
+
 - Output behavior:
-  - Without `-o/--output`, results are saved to the default `output/captured_apis.json`.
-  - With `-o output\myfile.json`, results are saved to that file.
-  - Re-running appends to the same JSON file by merging lists. Use a new file if you want a clean capture.
+  - Without `-o/--output`, results are saved to the default `output/captured_apis.json`
+  - With `-o output\myfile.json`, results are saved to that file
+  - Re-running appends to the same JSON file by merging lists. Use a new file if you want a clean capture
 
 ## 📚 Library Usage
 

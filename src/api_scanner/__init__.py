@@ -17,6 +17,7 @@ Example usage:
     ...     print(f"{call.request.method} {call.request.url} -> {call.response.status_code if call.response else 'No response'}")
 """
 
+from .version import __version__
 from .core import ApiSniffer
 from .cli import main
 from .config import (
@@ -25,8 +26,6 @@ from .config import (
     EXCLUDED_EXTENSIONS, EXCLUDED_PATHS, FILTER_KEYWORDS
 )
 from .models import ApiCall, RequestData, ResponseData
-
-__version__ = "0.1.0"
 __all__ = [
     # Main class
     'ApiSniffer',

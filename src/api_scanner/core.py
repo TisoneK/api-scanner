@@ -2,14 +2,20 @@
 Core functionality for the API Scanner.
 """
 import asyncio
+import base64
+import gzip
+import hashlib
 import json
 import logging
-import sys
+import os
+import re
+import signal
 import time
 import uuid
+import zlib
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Callable
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, Callable
 from urllib.parse import urlparse, parse_qs
 
 from mitmproxy import http, ctx
@@ -37,7 +43,8 @@ class ApiSniffer:
     """
     def __init__(self, host: str = None, port: int = None, 
                  ssl_verify: bool = None, output: str = None,
-                 filter_file: str = None, allowed_hosts: Optional[List[str]] = None):
+                 filter_file: str = None, allowed_hosts: Optional[List[str]] = None,
+                 blocked_hosts: Optional[List[str]] = None):
         self.api_calls: List[ApiCall] = []
         self.request_count = 0
         self.filtered_count = 0
@@ -50,8 +57,9 @@ class ApiSniffer:
         self.ssl_verify = ssl_verify if ssl_verify is not None else SSL_VERIFY
         self.output = output or str(OUTPUT_FILE)
         self._shutdown_event = asyncio.Event()
-        # Host allowlist
+        # Host allowlist and blocklist
         self.allowed_hosts = set(allowed_hosts or []) or ALLOWED_HOSTS
+        self.blocked_hosts = set(blocked_hosts or [])
         
         # Load custom filter keywords if provided, otherwise use defaults
         if filter_file:
@@ -80,24 +88,44 @@ class ApiSniffer:
         return False
         
     def is_api_request(self, flow: http.HTTPFlow) -> bool:
-        """Check if the request is an API request that should be captured."""
+        """Check if the request is an API request that should be captured.
+        
+        Returns:
+            bool: True if the request should be captured, False otherwise.
+            
+        Note:
+            - If allowed_hosts is set, only requests to those hosts are allowed
+            - If blocked_hosts is set, block those hosts and allow all others
+            - If neither is set, all requests are allowed except UI assets and filtered keywords
+        """
         if self.is_ui_asset(flow):
             return False
             
-        # If host allowlist is configured, enforce it
-        if self.allowed_hosts:
-            try:
-                host = urlparse(flow.request.pretty_url).netloc.split(':')[0].lower()
-            except Exception:
-                host = flow.request.host.lower() if hasattr(flow.request, 'host') else ''
-            if host not in {h.lower() for h in self.allowed_hosts}:
-                return False
-            # When using an allowlist, accept all requests for those hosts (after asset exclusion)
-            return True
+        try:
+            host = urlparse(flow.request.pretty_url).netloc.split(':')[0].lower()
+        except Exception:
+            host = flow.request.host.lower() if hasattr(flow.request, 'host') else ''
         
-        # Check if any of the filter keywords are in the URL
+        # Check blocked hosts first (takes precedence over allowed_hosts)
+        if hasattr(self, 'blocked_hosts') and self.blocked_hosts:
+            if any(host == h.lower() or host.endswith(f'.{h.lower()}') for h in self.blocked_hosts):
+                self.logger.debug(f"Blocked request to {host} (in blocked hosts list)")
+                return False
+        
+        # If allowed_hosts is set, only allow requests to those hosts
+        if hasattr(self, 'allowed_hosts') and self.allowed_hosts:
+            allowed = any(host == h.lower() or host.endswith(f'.{h.lower()}') for h in self.allowed_hosts)
+            if not allowed:
+                self.logger.debug(f"Blocked request to {host} (not in allowed hosts)")
+                return False
+        
+        # Check if the request matches any filter keywords
         url = flow.request.pretty_url.lower()
-        return any(keyword.lower() in url for keyword in self.filter_keywords)
+        if any(keyword.lower() in url for keyword in self.filter_keywords):
+            self.logger.debug(f"Blocked request matching filter: {url}")
+            return False
+            
+        return True
     
     def get_content_type(self, message) -> Optional[str]:
         """Extract and return the content type from a message."""
@@ -257,15 +285,33 @@ class ApiSniffer:
     
     def _save_to_file(self) -> None:
         """Save captured API calls to file."""
+        if not self.api_calls:
+            self.logger.debug("No API calls to save")
+            return
+            
         try:
+            output_path = Path(self.output).absolute()
+            self.logger.debug(f"Saving {len(self.api_calls)} API calls to {output_path}")
+            
             # Convert API calls to dictionaries
             api_calls_dict = [call.dict() for call in self.api_calls]
             
             # Save to file
-            save_to_file(api_calls_dict, self.output)
-            
+            if save_to_file(api_calls_dict, output_path):
+                self.logger.debug(f"Successfully saved API calls to {output_path}")
+            else:
+                self.logger.error(f"Failed to save API calls to {output_path}")
+                
         except Exception as e:
-            logger.error(f"Error saving API calls to file: {e}", exc_info=True)
+            self.logger.error(f"Error saving API calls to file: {e}", exc_info=True)
+            # Try to save to a fallback location if the original location fails
+            try:
+                fallback_path = Path("api_calls_fallback.json").absolute()
+                self.logger.error(f"Attempting to save to fallback location: {fallback_path}")
+                if save_to_file(api_calls_dict, fallback_path):
+                    self.logger.error(f"Successfully saved API calls to fallback location: {fallback_path}")
+            except Exception as fallback_error:
+                self.logger.error(f"Failed to save to fallback location: {fallback_error}", exc_info=True)
     
     async def start(self):
         """Start the proxy server."""

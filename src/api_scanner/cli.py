@@ -3,17 +3,30 @@ Command-line interface for the API Scanner.
 """
 import argparse
 import asyncio
+import json
+import logging
+import os
 import signal
 import sys
-from typing import List, Optional
+from pathlib import Path
+from typing import List, Optional, Dict, Any, Set, Tuple
 
-from mitmproxy import options
+from mitmproxy import http, options
+from mitmproxy.tools.dump import DumpMaster
 
-from .core import ApiSniffer
+from .version import __version__
+from .core import ApiSniffer, ApiCall
+from .storage_optimizer import OptimizedStorage
+from pathlib import Path
+import os
 from .config.config import (
     PROXY_HOST, PROXY_PORT, SSL_VERIFY,
     OUTPUT_FILE, OUTPUT_DIR, LOG_LEVEL
 )
+
+# Set up logging
+logging.basicConfig(level=LOG_LEVEL, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def parse_args(args=None):
     """Parse command line arguments."""
@@ -28,14 +41,58 @@ def parse_args(args=None):
         return host_str, PROXY_PORT or 8080
 
     # Main parser
-    parser = argparse.ArgumentParser(description='API Scanner - A tool for intercepting and analyzing API requests')
-    parser.add_argument('-v', '--version', action='version', version='%(prog)s 0.1.0')
+    parser = argparse.ArgumentParser(
+        description='API Scanner - A tool for intercepting and analyzing API requests',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Start capturing API requests
+  api-scanner start example.com
+  
+  # Specify custom host and port
+  api-scanner start -H 0.0.0.0 -p 8888 example.com
+  
+  # Use a blocklist
+  api-scanner start --block analytics.example.com example.com
+  
+  # Optimize captured data
+  api-scanner optimize captured.json -o optimized.json
+  
+  # Show help for a specific command
+  api-scanner start --help
+  api-scanner optimize --help
+'''
+    )
+    
+    # Global arguments
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
     
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
     
     # Start command (default)
-    start_parser = subparsers.add_parser('start', help='Start the API scanner proxy')
+    start_parser = subparsers.add_parser(
+        'start',
+        help='Start the API scanner proxy',
+        description='Start capturing API requests through the proxy',
+        epilog='''
+Examples:
+  # Basic usage
+  api-scanner start example.com
+  
+  # Multiple domains
+  api-scanner start example.com api.example.com
+  
+  # With custom output
+  api-scanner start -o output.json example.com
+  
+  # With SSL verification disabled
+  api-scanner start -k example.com
+  
+  # With verbose logging
+  api-scanner start -v example.com
+'''
+    )
     
     # Add a special argument for host:port format
     start_parser.add_argument('--bind', type=parse_host_port, metavar='HOST:PORT',
@@ -56,15 +113,49 @@ def parse_args(args=None):
                             help=f'Logging level: DEBUG, INFO, WARNING, ERROR (default: {LOG_LEVEL})')
     
     # Filtering options
-    start_parser.add_argument('--filter', type=str, dest='filter_file', default=None,
+    filter_group = start_parser.add_argument_group('filtering options')
+    filter_group.add_argument('--filter', type=str, dest='filter_file', default=None,
                             help='Path to a file containing filter patterns')
     
-    # Positional targets: either a list of domains to allowlist or a single file path
+    # Blocking options
+    blocking_group = start_parser.add_argument_group('blocking options')
+    blocking_group.add_argument('-b', '--block', dest='blocked_hosts', nargs='+',
+                              help='Block specific domains (space-separated). Can be used with allowed domains.')
+    blocking_group.add_argument('--block-file', dest='block_file',
+                              help='File containing a list of domains to block (one per line)')
+    
+    # Positional targets: list of domains to allow
     start_parser.add_argument('targets', nargs='*', 
-                            help='Domains to allowlist (e.g., example.com api.example.com) or a single file path containing one domain per line')
+                            help='Domains to allow (e.g., example.com api.example.com)')
+    
+    # Add a note about domain filtering
+    start_parser.epilog = ('Note: You can use both allowed domains (positional args) and blocked domains (-b/--block or --block-file) together. ' 
+                          'If no domains are specified, all domains will be allowed except blocked ones.')
     
     # Optimize command
-    optimize_parser = subparsers.add_parser('optimize', help='Optimize captured API storage')
+    optimize_parser = subparsers.add_parser(
+        'optimize',
+        help='Optimize captured API storage',
+        description='Optimize and clean captured API data',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Basic optimization
+  api-scanner optimize captured.json -o optimized.json
+  
+  # With gzip compression
+  api-scanner optimize captured.json --compression-method gzip
+  
+  # Show optimization statistics
+  api-scanner optimize captured.json --stats
+  
+  # Use custom ignore patterns
+  api-scanner optimize captured.json --ignore-patterns ignore.txt
+  
+  # Disable default filters and minification
+  api-scanner optimize captured.json --no-default-filters --no-minify
+'''
+    )
     optimize_parser.add_argument('input', help='Input JSON file with captured APIs')
     optimize_parser.add_argument('-o', '--output', help='Output file for optimized storage')
     
@@ -100,16 +191,35 @@ def parse_args(args=None):
     # Set start as the default command
     parser.set_defaults(func=start)
     
-    # For backward compatibility, if no command is provided, assume 'start'
-    if len(sys.argv) == 1 or not any(cmd in sys.argv[1] for cmd in ['start', 'optimize']):
-        args = ['start'] + sys.argv[1:]
-        return parser.parse_args(args)
+    # Parse arguments
+    parsed_args = parser.parse_args(args)
     
-    return parser.parse_args(args)
+    # Set up logging level based on verbosity
+    if parsed_args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Verbose logging enabled")
+    
+    # For backward compatibility, if no command is provided, assume 'start'
+    if parsed_args.command is None:
+        if len(sys.argv) == 1 or not any(cmd in sys.argv[1] for cmd in ['start', 'optimize']):
+            args = ['start'] + sys.argv[1:]
+            return parser.parse_args(args)
+    
+    return parsed_args
+
+def load_hosts_from_file(file_path: str) -> List[str]:
+    """Load a list of hosts from a file, one per line."""
+    try:
+        with open(file_path, 'r') as f:
+            return [line.strip() for line in f if line.strip() and not line.startswith('#')]
+    except Exception as e:
+        logging.error(f"Error loading hosts from {file_path}: {e}")
+        return []
 
 async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: int = None, 
                ssl_verify: bool = None, output: str = None,
-               filter_file: str = None, allowed_hosts: Optional[list] = None) -> None:
+               filter_file: str = None, allowed_hosts: Optional[list] = None,
+               blocked_hosts: Optional[List[str]] = None, block_file: Optional[str] = None) -> None:
     """
     Start the API scanner.
     
@@ -122,11 +232,17 @@ async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: in
     """
     from mitmproxy.tools.dump import DumpMaster
     
+    # Process blocked hosts from file if provided
+    final_blocked_hosts = set(blocked_hosts or [])
+    if block_file:
+        final_blocked_hosts.update(load_hosts_from_file(block_file))
+
     # Use provided sniffer or create a new one
     if sniffer is None:
         sniffer = ApiSniffer(
             filter_file=filter_file, 
             allowed_hosts=allowed_hosts,
+            blocked_hosts=list(final_blocked_hosts) if final_blocked_hosts else None,
             host=host,
             port=port,
             ssl_verify=ssl_verify,
@@ -161,6 +277,8 @@ async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: in
     logger.debug(f"Proxy configuration - Host: {host}, Port: {port}, SSL Verify: {ssl_verify}")
     if allowed_hosts:
         logger.debug(f"Allowed hosts: {allowed_hosts}")
+    if hasattr(sniffer, 'blocked_hosts') and sniffer.blocked_hosts:
+        logger.debug(f"Blocked hosts: {sniffer.blocked_hosts}")
     
     # Set up proxy options
     opts = options.Options(
@@ -342,35 +460,74 @@ def optimize_command(args):
 
 async def async_main(args=None):
     """Async entry point for the CLI."""
-    args = parse_args(args)
-    
-    # Set up logging
-    import logging
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper()) if hasattr(args, 'log_level') else logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
     try:
+        args = parse_args(args)
+        
         if args.command == 'optimize':
-            return optimize_command(args)
-        else:  # start command or default
-            # Handle --bind argument
-            if hasattr(args, 'bind') and args.bind:
-                args.host, args.port = args.bind
+            return await optimize_command(args)
+        
+        # Handle start command (default)
+        if hasattr(args, 'bind') and args.bind:
+            args.host, args.port = args.bind
+        
+        # Handle blocked hosts (takes precedence over allowed hosts)
+        blocked_hosts = []
+        if hasattr(args, 'blocked_hosts') and args.blocked_hosts:
+            blocked_hosts.extend(args.blocked_hosts)
+        if hasattr(args, 'block_file') and args.block_file:
+            blocked_hosts.extend(load_hosts_from_file(args.block_file))
+        
+        # Handle allowed hosts (only if no blocked hosts specified)
+        allowed_hosts = []
+        if not blocked_hosts and hasattr(args, 'targets') and args.targets:
+            # If a single file is provided, read hosts from it
+            if len(args.targets) == 1 and Path(args.targets[0]).is_file():
+                allowed_hosts = load_hosts_from_file(args.targets[0])
+            else:
+                allowed_hosts = args.targets
+        
+        # Verify output directory is writable
+        if args.output:
+            try:
+                output_path = Path(args.output).absolute()
+                output_dir = output_path.parent
                 
-            # Start the proxy
+                # Create the directory if it doesn't exist
+                output_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Test if directory is writable
+                test_file = output_dir / '.api_scanner_test'
+                try:
+                    test_file.touch()
+                    test_file.unlink()
+                except OSError as e:
+                    logger.error(f"Output directory {output_dir} is not writable: {e}")
+                    return 1
+                    
+                logger.info(f"Output will be saved to: {output_path}")
+                
+            except Exception as e:
+                logger.error(f"Error setting up output directory: {e}")
+                return 1
+        
+        # Start the proxy
+        try:
             await start(
                 host=args.host,
                 port=args.port,
-                ssl_verify=not getattr(args, 'no_ssl_verify', False),
+                ssl_verify=not args.no_ssl_verify,
                 output=args.output,
-                filter_file=getattr(args, 'filter_file', None),
-                allowed_hosts=getattr(args, 'allowed_hosts', None)
+                filter_file=args.filter_file,
+                allowed_hosts=allowed_hosts or None,
+                blocked_hosts=blocked_hosts or None,
+                block_file=args.block_file
             )
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        return 0
+        except Exception as e:
+            logging.error(f"Error: {e}")
+            if hasattr(args, 'log_level') and args.log_level.upper() == 'DEBUG':
+                import traceback
+                traceback.print_exc()
+            return 1
     except Exception as e:
         logging.error(f"Error: {e}")
         if hasattr(args, 'log_level') and args.log_level.upper() == 'DEBUG':

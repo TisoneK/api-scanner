@@ -36,33 +36,75 @@ def save_to_file(data: Any, file_path: Union[str, Path]) -> bool:
     Returns:
         bool: True if successful, False otherwise
     """
+    file_path = Path(file_path).absolute()
+    
     try:
-        file_path = Path(file_path)
         # Ensure the directory exists
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logging.error(f"Failed to create directory {file_path.parent}: {e}")
+            return False
+        
+        # Convert data to JSON to check serialization
+        try:
+            json_data = json.dumps(data, indent=2, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            logging.error(f"Failed to serialize data to JSON: {e}")
+            return False
         
         # If file exists, load existing data and append
-        if file_path.exists() and file_path.stat().st_size > 0:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                try:
-                    existing_data = json.load(f)
-                    if isinstance(existing_data, list) and isinstance(data, list):
-                        data = existing_data + data
-                    elif isinstance(existing_data, dict) and isinstance(data, dict):
-                        existing_data.update(data)
-                        data = existing_data
-                except json.JSONDecodeError:
-                    # If the file is corrupted, overwrite it
-                    pass
+        if file_path.exists():
+            try:
+                if file_path.stat().st_size > 0:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        try:
+                            existing_data = json.load(f)
+                            if isinstance(existing_data, list) and isinstance(data, list):
+                                data = existing_data + data
+                            elif isinstance(existing_data, dict) and isinstance(data, dict):
+                                existing_data.update(data)
+                                data = existing_data
+                            # Update the JSON data with merged content
+                            json_data = json.dumps(data, indent=2, ensure_ascii=False)
+                        except json.JSONDecodeError as e:
+                            logging.warning(f"Existing file {file_path} is corrupted, it will be overwritten: {e}")
+            except IOError as e:
+                logging.error(f"Error reading existing file {file_path}: {e}")
+                return False
         
-        # Write the data
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        # Write the data atomically using a temporary file
+        temp_path = file_path.with_suffix('.tmp')
+        try:
+            # Write to temporary file
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                f.write(json_data)
             
-        return True
-        
+            # On Windows, we need to remove the destination file first if it exists
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                except OSError as e:
+                    logging.error(f"Failed to remove existing file {file_path}: {e}")
+                    return False
+            
+            # Rename temp file to target file
+            temp_path.rename(file_path)
+            logging.debug(f"Successfully wrote {len(json_data)} bytes to {file_path}")
+            return True
+            
+        except (IOError, OSError) as e:
+            logging.error(f"Failed to write to file {file_path}: {e}")
+            # Clean up temp file if it exists
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+            return False
+            
     except Exception as e:
-        logging.error(f"Error saving to file {file_path}: {e}", exc_info=True)
+        logging.error(f"Unexpected error saving to {file_path}: {e}", exc_info=True)
         return False
 
 def format_size(size_bytes: int) -> str:

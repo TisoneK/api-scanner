@@ -50,6 +50,8 @@ Start the API scanner with default settings:
 api-scanner
 ```
 
+By default, running `api-scanner` without targets or filters captures everything (subject to built-in static asset exclusions).
+
 Customize the proxy settings (using both short and long forms):
 ```bash
 # Long form
@@ -88,6 +90,8 @@ api-scanner -l DEBUG
 | `-k` | `--no-ssl-verify` | Disable SSL certificate verification |
 | `-o` | `--output` | Output file path (default: captured_apis.json) |
 | `-l` | `--log-level` | Logging level: DEBUG, INFO, WARNING, ERROR (default: INFO) |
+|  | `--filter` | Path to custom keyword filter file |
+|  | `--allow-host` | Allowlist a host/domain to capture (repeatable) |
 
 ### Examples
 
@@ -109,6 +113,34 @@ api-scanner -H 0.0.0.0 -p 8080 -o my_apis.json -l DEBUG
 # Using host:port with other options
 api-scanner --bind 0.0.0.0:8080 -o my_apis.json -l DEBUG
 ```
+
+### Simple domain allowlist (positional targets)
+
+- Pass domains directly to only capture those:
+```bash
+api-scanner google.com facebook.com
+```
+
+- Or pass a single file path with one domain per line (lines starting with `#` are ignored):
+```bash
+api-scanner allowed_list.txt
+```
+
+- You can also mix with flags:
+```bash
+api-scanner --filter C:\path\to\filter.txt api.example.com
+api-scanner --allow-host auth.example.com domains.lst
+```
+
+#### Allowlist notes
+
+- When you pass domains (via positional args or a file), the scanner captures all non-static requests for those hosts. Keyword filters are not required for allowed hosts.
+- If you pass both an allowlist and `--filter`, the host allowlist takes precedence (filter keywords still apply when no allowlist is provided).
+- Proxy logs may show connections to other domains from your browser, but only allowed hosts are written to the JSON output.
+- Output behavior:
+  - Without `-o/--output`, results are saved to the default `output/captured_apis.json`.
+  - With `-o output\myfile.json`, results are saved to that file.
+  - Re-running appends to the same JSON file by merging lists. Use a new file if you want a clean capture.
 
 ## 📚 Library Usage
 
@@ -214,6 +246,13 @@ You can customize which API endpoints are captured by editing the filter configu
    - Group related endpoints together with comments
    - Test new patterns with the `--verbose` flag to see what's being captured
    - Consider versioning your filter file if you maintain different sets of filters
+
+### 🎯 Capturing everything
+
+If you want to capture all API traffic (again, excluding common static assets), simply run:
+```bash
+api-scanner
+```
 
 ## ⚙️ Advanced Configuration
 

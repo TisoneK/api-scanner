@@ -16,7 +16,7 @@ from mitmproxy import http, ctx
 
 from .config.config import (
     OUTPUT_FILE, OUTPUT_DIR, LOG_LEVEL,
-    PROXY_HOST, PROXY_PORT, SSL_VERIFY
+    PROXY_HOST, PROXY_PORT, SSL_VERIFY, ALLOWED_HOSTS
 )
 from .config.filters import (
     EXCLUDED_EXTENSIONS, EXCLUDED_PATHS, FILTER_KEYWORDS
@@ -37,7 +37,7 @@ class ApiSniffer:
     """
     def __init__(self, host: str = None, port: int = None, 
                  ssl_verify: bool = None, output: str = None,
-                 filter_file: str = None):
+                 filter_file: str = None, allowed_hosts: Optional[List[str]] = None):
         self.api_calls: List[ApiCall] = []
         self.request_count = 0
         self.filtered_count = 0
@@ -50,6 +50,8 @@ class ApiSniffer:
         self.ssl_verify = ssl_verify if ssl_verify is not None else SSL_VERIFY
         self.output = output or str(OUTPUT_FILE)
         self._shutdown_event = asyncio.Event()
+        # Host allowlist
+        self.allowed_hosts = set(allowed_hosts or []) or ALLOWED_HOSTS
         
         # Load custom filter keywords if provided, otherwise use defaults
         if filter_file:
@@ -82,6 +84,17 @@ class ApiSniffer:
         if self.is_ui_asset(flow):
             return False
             
+        # If host allowlist is configured, enforce it
+        if self.allowed_hosts:
+            try:
+                host = urlparse(flow.request.pretty_url).netloc.split(':')[0].lower()
+            except Exception:
+                host = flow.request.host.lower() if hasattr(flow.request, 'host') else ''
+            if host not in {h.lower() for h in self.allowed_hosts}:
+                return False
+            # When using an allowlist, accept all requests for those hosts (after asset exclusion)
+            return True
+        
         # Check if any of the filter keywords are in the URL
         url = flow.request.pretty_url.lower()
         return any(keyword.lower() in url for keyword in self.filter_keywords)
@@ -249,7 +262,7 @@ class ApiSniffer:
             api_calls_dict = [call.dict() for call in self.api_calls]
             
             # Save to file
-            save_to_file(api_calls_dict, OUTPUT_FILE)
+            save_to_file(api_calls_dict, self.output)
             
         except Exception as e:
             logger.error(f"Error saving API calls to file: {e}", exc_info=True)

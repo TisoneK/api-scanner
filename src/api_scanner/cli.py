@@ -45,6 +45,12 @@ def parse_args(args=None):
                       help=f'Output file path (default: {OUTPUT_FILE})')
     parser.add_argument('-l', '--log-level', type=str, default=LOG_LEVEL,
                       help=f'Logging level: DEBUG, INFO, WARNING, ERROR (default: {LOG_LEVEL})')
+    parser.add_argument('--filter', type=str, dest='filter_file', default=None,
+                      help='Path to custom filter keywords file')
+    parser.add_argument('--allow-host', dest='allowed_hosts', action='append', default=None,
+                      help='Allowlist a host/domain to capture. Repeat for multiple.')
+    # Positional targets: either a list of domains OR a single file path to a list
+    parser.add_argument('targets', nargs='*', help='Domains to allowlist (e.g., example.com api.example.com) or a single file path containing one domain per line')
     
     # Parse the arguments
     parsed_args = parser.parse_args(args)
@@ -53,10 +59,41 @@ def parse_args(args=None):
     if parsed_args.bind:
         parsed_args.host, parsed_args.port = parsed_args.bind
     
+    # Normalize allowed_hosts to list
+    if parsed_args.allowed_hosts is None:
+        parsed_args.allowed_hosts = []
+
+    # If positional targets are provided, interpret them
+    resolved_allowed = []
+    if parsed_args.targets:
+        # If exactly one arg and it looks like a file path, try to load from file
+        if len(parsed_args.targets) == 1:
+            candidate = parsed_args.targets[0]
+            try:
+                import os
+                if os.path.exists(candidate) and os.path.isfile(candidate):
+                    with open(candidate, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            domain = line.strip()
+                            if domain and not domain.startswith('#'):
+                                resolved_allowed.append(domain)
+                else:
+                    # Not a file, treat as a domain
+                    resolved_allowed = [candidate]
+            except Exception:
+                # On any error, fall back to treating as domains
+                resolved_allowed = [candidate]
+        else:
+            # Treat all as domains
+            resolved_allowed = parsed_args.targets
+
+    # Merge with --allow-host entries
+    parsed_args.allowed_hosts = list({*parsed_args.allowed_hosts, *resolved_allowed}) if resolved_allowed else parsed_args.allowed_hosts
     return parsed_args
 
 async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: int = None, 
-               ssl_verify: bool = None, output: str = None) -> None:
+               ssl_verify: bool = None, output: str = None,
+               filter_file: str = None, allowed_hosts: Optional[list] = None) -> None:
     """
     Start the API scanner.
     
@@ -71,7 +108,14 @@ async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: in
     
     # Use provided sniffer or create a new one
     if sniffer is None:
-        sniffer = ApiSniffer()
+        sniffer = ApiSniffer(filter_file=filter_file, allowed_hosts=allowed_hosts)
+    else:
+        # If an instance was provided, update its allowlist if specified
+        if allowed_hosts:
+            try:
+                sniffer.allowed_hosts = set(allowed_hosts)
+            except Exception:
+                pass
     
     # Use provided values or fall back to config
     host = host or PROXY_HOST or '127.0.0.1'
@@ -82,6 +126,8 @@ async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: in
     # Log the configuration being used
     logger = sniffer.logger
     logger.debug(f"Proxy configuration - Host: {host}, Port: {port}, SSL Verify: {ssl_verify}")
+    if allowed_hosts:
+        logger.debug(f"Allowed hosts: {allowed_hosts}")
     
     # Set up proxy options
     opts = options.Options(
@@ -134,9 +180,13 @@ async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: in
     # Log startup information
     logger.info(f"Starting proxy on {host}:{port}")
     logger.info(f"Output file: {output}")
+    if allowed_hosts:
+        logger.info(f"Host allowlist enabled: {allowed_hosts}")
     logger.info("Press Ctrl+C to stop")
     
+    # Ensure sniffer writes to the computed output
     try:
+        sniffer.output = output
         # Start the proxy server
         await m.run()
         
@@ -173,7 +223,7 @@ def main(args=None):
     LOG_LEVEL = args.log_level
     
     try:
-        asyncio.run(start())
+        asyncio.run(start(filter_file=args.filter_file, allowed_hosts=args.allowed_hosts))
     except KeyboardInterrupt:
         print("\nShutdown requested by user")
         return 0

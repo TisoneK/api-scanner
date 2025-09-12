@@ -20,6 +20,10 @@ DEFAULT_CONFIG = {
     },
     "logging": {
         "level": "INFO"
+    },
+    "filters": {
+        # Optional allowlist of hosts (domains) to capture. Empty means allow all.
+        "allowed_hosts": []
     }
 }
 
@@ -56,6 +60,7 @@ SSL_VERIFY = config["proxy"]["ssl_verify"]
 OUTPUT_DIR = Path(config["output"]["directory"])
 OUTPUT_FILE = OUTPUT_DIR / config["output"]["filename"]
 LOG_LEVEL = config["logging"]["level"]
+ALLOWED_HOSTS = set(config.get("filters", {}).get("allowed_hosts", []))
 
 # Ensure output directory exists
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

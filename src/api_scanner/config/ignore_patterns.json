@@ -1,0 +1,36 @@
+{
+  "ui_assets": [
+    "/sys-.*?/",
+    "/bff-api/",
+    "/fatman-api/.*?/(metadata|event|ab)\\.json",
+    "/webpack|/assets/",
+    "/__webpack|/sockjs-node/",
+    "\\.(js|css|png|jpg|jpeg|gif|svg|woff2?|ttf|eot)(\\?.*)?$"
+  ],
+  "session_ui": [
+    "/session-api/",
+    "/web-api/(api/)?v?\\d*/bonuses/",
+    "/champs-api/",
+    "/checker/redirect/stat/run"
+  ],
+  "analytics_monitoring": [
+    "/analytics/",
+    "/telemetry/",
+    "/metrics",
+    "/stats",
+    "/checker/"
+  ],
+  "common_ui": [
+    "/sockjs/",
+    "/socket.io/",
+    "/hot-update",
+    "/__webpack",
+    "/_next/",
+    "/static/"
+  ],
+  "browser_specific": [
+    "/favicon.ico",
+    "/robots.txt",
+    "/sitemap.xml"
+  ]
+}

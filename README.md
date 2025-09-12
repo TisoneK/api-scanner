@@ -10,12 +10,81 @@ A powerful Python tool for intercepting, analyzing, and documenting API requests
 - 🕵️‍♂️ Intercept and log HTTP/HTTPS API requests in real-time
 - 📊 Comprehensive API call analysis with timing and status codes
 - 💾 Save captured API data to structured JSON format
+- 🔄 Built-in storage optimization to reduce file size and remove duplicates
+- ⚡ Asynchronous processing for high performance
+- 🔍 Filter and search through captured requests
+- 🛠️ Programmatic access to captured data
+- 🔧 Highly configurable through multiple methods
+- 🔒 Supports SSL/TLS interception
+
+- 🕵️‍♂️ Intercept and log HTTP/HTTPS API requests in real-time
+- 📊 Comprehensive API call analysis with timing and status codes
+- 💾 Save captured API data to structured JSON format
 - 🔄 Support for both JSON and XML request/response bodies
 - ⚡ Asynchronous processing for high performance
 - 🔍 Filter and search through captured requests
 - 🛠️ Programmatic access to captured data
 - 🔧 Highly configurable through multiple methods
 - 🔒 Supports SSL/TLS interception
+
+## 🔄 Storage Optimization
+
+Optimize captured API data by removing duplicates, filtering out unnecessary requests, and compressing responses to save disk space.
+
+### Basic Usage
+
+```bash
+# Optimize captured API data
+api-scanner optimize captured_apis.json -o optimized_apis.json
+
+# With detailed statistics
+api-scanner optimize captured_apis.json --stats
+```
+
+### Optimization Options
+
+| Option | Description |
+|--------|-------------|
+| `-o, --output` | Output file (default: `{input}_optimized.json`) |
+| `--compress-threshold` | Minimum response size to compress (default: 1024 bytes) |
+| `--compression-method` | `zlib` (default), `gzip`, `base64`, or `none` |
+| `--no-minify` | Disable JSON minification |
+| `--ignore-patterns` | Comma-separated patterns or path to file with patterns |
+| `--no-default-filters` | Disable built-in ignore patterns |
+| `--stats` | Show optimization statistics |
+| `--quiet` | Suppress non-error output |
+
+### Examples
+
+```bash
+# Basic optimization with default settings
+api-scanner optimize captured_apis.json
+
+# With custom compression
+api-scanner optimize captured_apis.json --compression-method gzip --compress-threshold 2048
+
+# Using ignore patterns from file
+api-scanner optimize captured_apis.json --ignore-patterns ignore_patterns.txt
+
+# Inline ignore patterns
+api-scanner optimize captured_apis.json --ignore-patterns "/analytics/,/telemetry/"
+
+# Disable default filters and minification
+api-scanner optimize captured_apis.json --no-default-filters --no-minify
+```
+
+### Ignore Patterns File Format
+
+Create a text file with one pattern per line (comments start with `#`):
+
+```plaintext
+# Ignore analytics and telemetry
+/analytics/
+/telemetry/
+
+# Ignore static assets
+\.(js|css|png|jpg|jpeg|gif|svg|woff2?|ttf|eot)(\?.*)?$
+```
 
 ## 🚀 Quick Start
 

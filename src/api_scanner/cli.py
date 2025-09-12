@@ -57,33 +57,45 @@ def parse_args(args=None):
     
     # Filtering options
     start_parser.add_argument('--filter', type=str, dest='filter_file', default=None,
-                                  help='List of allowed hosts (can be specified multiple times)')
-    start_parser.add_argument('--block-host', dest='blocked_hosts', action='append', default=None,
-                            help='List of blocked hosts (can be specified multiple times)')
+                            help='Path to a file containing filter patterns')
     
-    # Positional targets: either a list of domains OR a single file path to a list
-    start_parser.add_argument('targets', nargs='*', help='Domains to allowlist (e.g., example.com api.example.com) or a single file path containing one domain per line')
+    # Positional targets: either a list of domains to allowlist or a single file path
+    start_parser.add_argument('targets', nargs='*', 
+                            help='Domains to allowlist (e.g., example.com api.example.com) or a single file path containing one domain per line')
     
     # Optimize command
-    optimize_parser = subparsers.add_parser('optimize', help='Optimize captured API data')
+    optimize_parser = subparsers.add_parser('optimize', help='Optimize captured API storage')
     optimize_parser.add_argument('input', help='Input JSON file with captured APIs')
     optimize_parser.add_argument('-o', '--output', help='Output file for optimized storage')
-    optimize_parser.add_argument('--compress-threshold', type=int, default=1024,
-                               help='Minimum response size in bytes to compress (0 = always compress)')
-    optimize_parser.add_argument('--compression-method', 
-                               choices=['zlib', 'gzip', 'base64', 'none'], 
-                               default='zlib',
-                               help='Compression method to use')
-    optimize_parser.add_argument('--no-minify', action='store_false', dest='minify_json',
-                               help='Disable JSON minification')
-    optimize_parser.add_argument('--ignore-patterns', 
-                               help='Comma-separated list of regex patterns to ignore, or path to a file containing patterns (one per line)')
-    optimize_parser.add_argument('--no-default-filters', action='store_true',
-                               help='Disable default ignore patterns')
-    optimize_parser.add_argument('--stats', action='store_true', 
-                               help='Show detailed statistics after processing')
-    optimize_parser.add_argument('--quiet', action='store_true',
-                               help='Suppress all output except errors')
+    
+    # Compression options
+    compression_group = optimize_parser.add_argument_group('compression options')
+    compression_group.add_argument('--no-compression', action='store_true',
+                                 help='Disable compression completely')
+    compression_group.add_argument('--compress-threshold', type=int, default=1024,
+                                 help='Minimum response size in bytes to compress (0 = always compress)')
+    compression_group.add_argument('--compression-method', 
+                                 choices=['zlib', 'gzip', 'base64'], 
+                                 default='zlib',
+                                 help='Compression method to use (default: zlib)')
+    
+    # Filtering options
+    filter_group = optimize_parser.add_argument_group('filtering options')
+    filter_group.add_argument('--no-filters', action='store_true',
+                            help='Disable all filtering (ignore patterns)')
+    filter_group.add_argument('--ignore-patterns', 
+                            help='Comma-separated list of regex patterns to ignore, or path to a file containing patterns (one per line)')
+    filter_group.add_argument('--no-default-filters', action='store_true',
+                            help='Disable built-in ignore patterns')
+    
+    # Output options
+    output_group = optimize_parser.add_argument_group('output options')
+    output_group.add_argument('--no-minify', action='store_false', dest='minify_json',
+                            help='Disable JSON minification')
+    output_group.add_argument('--stats', action='store_true', 
+                            help='Show detailed statistics after processing')
+    output_group.add_argument('--quiet', action='store_true',
+                            help='Suppress all output except errors')
     
     # Set start as the default command
     parser.set_defaults(func=start)
@@ -97,7 +109,7 @@ def parse_args(args=None):
 
 async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: int = None, 
                ssl_verify: bool = None, output: str = None,
-               filter_file: str = None, allowed_hosts: Optional[list] = None, blocked_hosts: Optional[list] = None) -> None:
+               filter_file: str = None, allowed_hosts: Optional[list] = None) -> None:
     """
     Start the API scanner.
     
@@ -112,19 +124,31 @@ async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: in
     
     # Use provided sniffer or create a new one
     if sniffer is None:
-        sniffer = ApiSniffer(filter_file=filter_file, allowed_hosts=allowed_hosts, blocked_hosts=blocked_hosts)
+        sniffer = ApiSniffer(
+            filter_file=filter_file, 
+            allowed_hosts=allowed_hosts,
+            host=host,
+            port=port,
+            ssl_verify=ssl_verify,
+            output=output
+        )
     else:
         # If an instance was provided, update its allowlist if specified
         if allowed_hosts:
             try:
                 sniffer.allowed_hosts = set(allowed_hosts)
-            except Exception:
-                pass
-        if blocked_hosts:
-            try:
-                sniffer.blocked_hosts = set(blocked_hosts)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to update allowed_hosts: {e}")
+        
+        # Update other parameters if provided
+        if host is not None:
+            sniffer.host = host
+        if port is not None:
+            sniffer.port = port
+        if ssl_verify is not None:
+            sniffer.ssl_verify = ssl_verify
+        if output is not None:
+            sniffer.output = output
     
     # Use provided values or fall back to config
     host = host or PROXY_HOST or '127.0.0.1'
@@ -137,8 +161,6 @@ async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: in
     logger.debug(f"Proxy configuration - Host: {host}, Port: {port}, SSL Verify: {ssl_verify}")
     if allowed_hosts:
         logger.debug(f"Allowed hosts: {allowed_hosts}")
-    if blocked_hosts:
-        logger.debug(f"Blocked hosts: {blocked_hosts}")
     
     # Set up proxy options
     opts = options.Options(
@@ -193,8 +215,6 @@ async def start(sniffer: Optional[ApiSniffer] = None, host: str = None, port: in
     logger.info(f"Output file: {output}")
     if allowed_hosts:
         logger.info(f"Host allowlist enabled: {allowed_hosts}")
-    if blocked_hosts:
-        logger.info(f"Host blocklist enabled: {blocked_hosts}")
     logger.info("Press Ctrl+C to stop")
     
     # Ensure sniffer writes to the computed output
@@ -233,7 +253,7 @@ def load_patterns_from_file(file_path: str) -> List[str]:
 
 def optimize_command(args):
     """Handle the optimize command."""
-    from .storage_optimizer import process_capture_file
+    from .storage_optimizer import process_capture_file, OptimizedStorage
     from pathlib import Path
     import os
     
@@ -241,52 +261,75 @@ def optimize_command(args):
     input_path = Path(args.input)
     output_path = Path(args.output) if args.output else input_path.with_name(f"{input_path.stem}_optimized.json")
     
-    # Prepare ignore patterns
+    # Handle compression settings
+    compression_method = None if args.no_compression else args.compression_method
+    
+    # Handle ignore patterns
+    use_ignore_patterns = not (args.no_filters or args.no_default_filters)
     ignore_patterns = []
-    if not args.no_default_filters:
+    
+    if use_ignore_patterns and not args.no_default_filters:
         ignore_patterns = None  # Will use defaults
     
-    if args.ignore_patterns:
+    if args.ignore_patterns and not args.no_filters:
         # Check if the argument is a file
         ignore_file = Path(args.ignore_patterns)
         if ignore_file.is_file():
             if not args.quiet:
                 print(f"📄 Loading ignore patterns from: {ignore_file}")
             ignore_patterns = load_patterns_from_file(str(ignore_file))
+            use_ignore_patterns = True
         else:
             # Treat as comma-separated patterns
             ignore_patterns = [p.strip() for p in args.ignore_patterns.split(',') if p.strip()]
+            use_ignore_patterns = True
     
     # Process the file
     try:
         if not args.quiet:
             print(f"🔍 Processing {input_path}...")
-            if ignore_patterns is not None:
-                print(f"   • Using {len(ignore_patterns)} custom ignore patterns")
-            else:
-                print("   • Using default ignore patterns")
-            print(f"   • Compression: {args.compression_method} (threshold: {args.compress_threshold} bytes)")
             
-        stats = process_capture_file(
-            input_path=str(input_path),
-            output_path=str(output_path),
+            # Print compression info
+            if compression_method:
+                print(f"   • Compression: {compression_method} (threshold: {args.compress_threshold} bytes)")
+            else:
+                print("   • Compression: disabled")
+                
+            # Print filtering info
+            if args.no_filters:
+                print("   • Filters: disabled")
+            else:
+                if ignore_patterns is not None:
+                    print(f"   • Using {len(ignore_patterns)} custom ignore patterns")
+                elif not args.no_default_filters:
+                    print("   • Using default ignore patterns")
+                else:
+                    print("   • No ignore patterns")
+        
+        # Create optimizer with current settings
+        optimizer = OptimizedStorage(
+            compression_method=compression_method,
             compress_threshold=args.compress_threshold,
-            compression_method=args.compression_method,
             minify_json=args.minify_json,
-            custom_ignore_patterns=ignore_patterns if ignore_patterns is not None else []
+            use_ignore_patterns=use_ignore_patterns
         )
         
-        if not args.quiet or args.stats:
-            if args.stats:
-                # Import the print_stats function from optimize_storage
-                from .optimize_storage import print_stats
-                print_stats(stats)
-            else:
-                print(f"✅ Optimized storage saved to: {output_path}")
-                print(f"   • Reduced {stats['total_requests']:,} requests to {stats['unique_responses']:,} unique responses")
-                if stats.get('compression_ratio', 0) > 0:
-                    print(f"   • Compression ratio: {stats['compression_ratio']:.1f}x")
-                print(f"   • Output size: {stats['output_size'] / 1024:.2f} KB")
+        # Process the capture file
+        stats = process_capture_file(
+            input_file=str(input_path),
+            output_file=str(output_path),
+            optimizer=optimizer,
+            ignore_patterns=ignore_patterns,
+            show_stats=args.stats,
+            quiet=args.quiet
+        )
+        
+        if not args.quiet and stats:
+            print(f"✅ Optimized storage saved to: {output_path}")
+            print(f"   • Reduced {stats['total_requests']:,} requests to {stats['unique_responses']:,} unique responses")
+            if stats.get('compression_ratio', 0) > 0:
+                print(f"   • Compression ratio: {stats['compression_ratio']:.1f}x")
+            print(f"   • Output size: {stats['output_size'] / 1024:.2f} KB")
                 
     except Exception as e:
         print(f"❌ Error: {e}", file=sys.stderr)
@@ -323,8 +366,7 @@ async def async_main(args=None):
                 ssl_verify=not getattr(args, 'no_ssl_verify', False),
                 output=args.output,
                 filter_file=getattr(args, 'filter_file', None),
-                allowed_hosts=getattr(args, 'allowed_hosts', None),
-                blocked_hosts=getattr(args, 'blocked_hosts', None)
+                allowed_hosts=getattr(args, 'allowed_hosts', None)
             )
     except KeyboardInterrupt:
         print("\nShutting down...")

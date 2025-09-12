@@ -8,15 +8,18 @@ This module provides functionality to reduce storage usage by:
 4. Optimizing response storage
 """
 from typing import Dict, List, Any, Set, Optional, Tuple, Union, BinaryIO
-import hashlib
 import json
-import zlib
-import base64
-import gzip
-from pathlib import Path
-from dataclasses import dataclass, field
 import re
+import zlib
+import gzip
+import base64
+import hashlib
+import datetime
+import time
+import os
+from pathlib import Path
 from enum import Enum, auto
+from dataclasses import dataclass, field
 
 class CompressionMethod(Enum):
     NONE = auto()
@@ -82,60 +85,117 @@ class OptimizedStorage:
     no_compress_patterns: List[str] = field(init=False)
     
     # Compiled regex patterns for faster matching
-    _compiled_patterns: List[re.Pattern] = field(init=False)
-    _no_compress_patterns: List[re.Pattern] = field(init=False)
+    _compiled_ignore: List[re.Pattern] = field(init=False)
+    _compiled_no_compress: List[re.Pattern] = field(init=False)
     
-    def __post_init__(self):
-        """Initialize the optimizer by loading patterns from config files."""
-        # Load ignore patterns from config
-        self.ignore_patterns = self._load_patterns('ignore_patterns.json')
-        self.no_compress_patterns = self._load_patterns('no_compress_patterns.json')
+    use_ignore_patterns: bool = True
+    
+    response_count: int = 0
+    
+    def __init__(
+        self,
+        compression_method: str = 'zlib',
+        compress_threshold: int = 1024,
+        minify_json: bool = True,
+        use_ignore_patterns: bool = True,
+        config_dir: Optional[Union[str, Path]] = None
+    ):
+        self.compression_method = compression_method
+        self.compress_threshold = compress_threshold
+        self.minify_json = minify_json
+        self.use_ignore_patterns = use_ignore_patterns
         
-        # Compile all patterns for better performance
-        self._compiled_patterns = [re.compile(p, re.IGNORECASE) for p in self.ignore_patterns]
-        self._no_compress_patterns = [re.compile(p, re.IGNORECASE) for p in self.no_compress_patterns]
+        # Set up config directory
+        if config_dir is None:
+            self.config_dir = Path(__file__).parent / 'config'
+        else:
+            self.config_dir = Path(config_dir)
+        
+        # Ensure config directory exists
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize storage for tracking unique responses
+        self.unique_responses = {}
+        self.response_count = 0
+        
+        # Initialize patterns
+        self.ignore_patterns = []
+        self._compiled_ignore = []
+        self.no_compress_patterns = []
+        self._compiled_no_compress = []
+        
+        # Load patterns if config directory exists
+        try:
+            self._load_ignore_patterns()
+            self._load_no_compress_patterns()
+        except FileNotFoundError as e:
+            print(f"Warning: {e}. Using empty pattern lists.")
+        except Exception as e:
+            print(f"Warning: Failed to load patterns: {e}")
     
     def _load_patterns(self, filename: str) -> List[str]:
         """Load patterns from a JSON config file."""
         config_path = self.config_dir / filename
+        
+        # Return empty list if config file doesn't exist
         if not config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {config_path}")
+            print(f"Warning: Config file not found: {config_path}")
+            return []
             
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 
-            # Flatten the nested structure into a single list of patterns
+            # Handle both array and object with categories
             patterns = []
-            for category in config.values():
-                if isinstance(category, list):
-                    patterns.extend(category)
-                else:
-                    patterns.append(category)
-                    
+            if isinstance(config, dict):
+                for category, items in config.items():
+                    if isinstance(items, list):
+                        patterns.extend(items)
+                    else:
+                        patterns.append(category)
+            elif isinstance(config, list):
+                patterns = config
+            else:
+                print(f"Warning: Invalid config format in {filename}. Expected object or array.")
+                return []
+                
             return patterns
             
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in {filename}: {e}")
+            print(f"Warning: Invalid JSON in {filename}: {e}")
+            return []
         except Exception as e:
-            raise RuntimeError(f"Failed to load {filename}: {e}")
+            print(f"Warning: Failed to load {filename}: {e}")
+            return []
+    
+    def _load_ignore_patterns(self) -> None:
+        """Load ignore patterns from config."""
+        self.ignore_patterns = self._load_patterns('ignore_patterns.json')
+        self._compiled_ignore = [re.compile(p, re.IGNORECASE) for p in self.ignore_patterns]
+    
+    def _load_no_compress_patterns(self) -> None:
+        """Load no-compress patterns from config."""
+        self.no_compress_patterns = self._load_patterns('no_compress_patterns.json')
+        self._compiled_no_compress = [re.compile(p, re.IGNORECASE) for p in self.no_compress_patterns]
     
     def should_ignore(self, url: str) -> bool:
-        """Check if a URL matches any of the ignore patterns."""
-        if not url:
-            return True
-        return any(pattern.search(url) for pattern in self._compiled_patterns)
+        """Check if a URL should be ignored based on patterns."""
+        if not self.use_ignore_patterns:
+            return False
+        return any(pattern.search(url) for pattern in self._compiled_ignore)
     
-    def should_compress(self, url: str, content_length: int) -> bool:
-        """Determine if a response should be compressed."""
-        if content_length < self.compress_responses_larger_than:
+    def should_compress(self, url, data):
+        """Check if data should be compressed based on patterns and size."""
+        if not self.compression_method or self.compression_method == 'none':
             return False
             
-        # Don't compress if URL matches no_compress patterns
-        if any(pattern.search(url) for pattern in self._no_compress_patterns):
+        # Check if URL matches any no-compress patterns
+        if self.use_ignore_patterns and any(pattern.search(url) for pattern in self._compiled_no_compress):
             return False
             
-        return True
+        # Check size threshold if compression is enabled
+        return len(str(data)) >= self.compress_threshold
     
     def _compress_data(self, data: Union[str, bytes, dict, list], url: str) -> Tuple[Union[str, dict], Dict[str, str]]:
         """Compress response data if needed."""
@@ -212,68 +272,104 @@ class OptimizedStorage:
         
         return processed
     
-    def add_request_response(self, request: Dict[str, Any], response: Dict[str, Any], 
-                           timestamp: str, index: int) -> bool:
+    def _generate_response_key(self, response: Dict[str, Any]) -> str:
+        """Generate a unique key for a response."""
+        # For performance, we might want to exclude certain headers that change frequently
+        # but don't affect the actual response data (e.g., date, cache-control)
+        headers = {
+            k: v for k, v in response.get('headers', {}).items()
+            if k.lower() not in {'date', 'cache-control', 'expires', 'last-modified', 'etag'}
+        }
+        
+        components = [
+            str(response.get('status_code')),
+            json.dumps(headers, sort_keys=True),
+            json.dumps(response.get('body'), sort_keys=True) if 'body' in response else ''
+        ]
+        return hashlib.sha256('|'.join(str(c) for c in components).encode()).hexdigest()
+    
+    def add_request_response(
+        self, 
+        request: Dict[str, Any], 
+        response: Dict[str, Any], 
+        timestamp: str,
+        request_id: Optional[str] = None
+    ) -> bool:
         """
-        Add a request/response pair to the optimized storage.
+        Add a request/response pair to storage if it's not a duplicate.
         
         Args:
             request: The request dictionary
             response: The response dictionary
             timestamp: Timestamp of the request
-            index: Index of the request in the original capture
+            request_id: Optional request ID
             
         Returns:
-            bool: True if the request was added, False if it was ignored
+            bool: True if the request/response was added, False if it was a duplicate
         """
-        # Skip ignored URLs
+        self.response_count += 1
+        
+        # Skip if URL matches ignore patterns
         url = request.get('url', '')
-        if self.should_ignore(url):
+        if self.use_ignore_patterns and self.should_ignore(url):
             return False
             
-        # Process and optimize the response
-        processed_response = self._process_response(response, url)
-        pair = RequestResponsePair(request, processed_response, timestamp, index)
+        # Process the response
+        processed = self._process_response(response, url)
         
-        # Store response if we haven't seen it before
-        if pair.response_signature not in self.unique_responses:
-            self.unique_responses[pair.response_signature] = processed_response
+        # Generate a unique key for this response
+        response_key = self._generate_response_key(processed)
         
-        # Update request mapping
-        self.request_to_response[pair.signature] = pair.response_signature
-        
-        # Store minimal request metadata
-        self.request_metadata.append({
-            'index': index,
-            'timestamp': timestamp,
-            'signature': pair.signature,
-            'method': request.get('method'),
-            'url': url,
-            'status_code': response.get('status_code'),
-            'content_length': len(str(response.get('body', ''))),
-            'compressed': '_compression' in (processed_response or {})
-        })
+        # Check if we've seen this response before
+        if response_key in self.unique_responses:
+            # Update the reference count
+            self.unique_responses[response_key]['count'] += 1
+            self.unique_responses[response_key]['last_seen'] = timestamp
+            self.unique_responses[response_key]['urls'].add(url)
+            return False
+            
+        # Add to storage if it's a new response
+        self.unique_responses[response_key] = {
+            'response': processed,
+            'count': 1,
+            'first_seen': timestamp,
+            'last_seen': timestamp,
+            'urls': {url}
+        }
         
         return True
     
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the optimized storage to a dictionary for serialization."""
-        return {
-            'unique_responses': self.unique_responses,
-            'request_to_response': self.request_to_response,
-            'request_metadata': self.request_metadata,
-            'stats': {
-                'total_requests': len(self.request_metadata),
-                'unique_responses': len(self.unique_responses),
-                'compression_ratio': len(self.request_metadata) / len(self.unique_responses) if self.unique_responses else 0
-            }
-        }
-    
     def save_to_file(self, file_path: str) -> None:
         """Save the optimized storage to a file."""
-        output = self.to_dict()
+        output = {
+            'metadata': {
+                'version': '1.0',
+                'compression_method': self.compression_method,
+                'total_requests': self.response_count,
+                'unique_responses': len(self.unique_responses),
+                'created_at': datetime.datetime.now().isoformat()
+            },
+            'responses': [
+                {
+                    'key': key,
+                    'response': data['response'],
+                    'count': data['count'],
+                    'first_seen': data['first_seen'],
+                    'last_seen': data['last_seen'],
+                    'urls': list(data['urls'])
+                }
+                for key, data in self.unique_responses.items()
+            ]
+        }
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        
         with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(output, f, indent=2)
+            if self.minify_json:
+                json.dump(output, f, separators=(',', ':'))
+            else:
+                json.dump(output, f, indent=2)
     
     @classmethod
     def from_file(cls, file_path: str) -> 'OptimizedStorage':
@@ -282,7 +378,17 @@ class OptimizedStorage:
             data = json.load(f)
         
         storage = cls()
-        storage.unique_responses = data.get('unique_responses', {})
+        storage.unique_responses = {}
+        storage.response_count = data['metadata']['total_requests']
+        
+        for response in data['responses']:
+            storage.unique_responses[response['key']] = {
+                'response': response['response'],
+                'count': response['count'],
+                'first_seen': response['first_seen'],
+                'last_seen': response['last_seen'],
+                'urls': set(response['urls'])
+            }
         storage.request_to_response = data.get('request_to_response', {})
         storage.request_metadata = data.get('request_metadata', [])
         
@@ -316,99 +422,118 @@ def generate_response_signature(response: Dict[str, Any]) -> str:
     return hashlib.sha256('|'.join(str(c) for c in components).encode()).hexdigest()
 
 def process_capture_file(
-    input_path: str, 
-    output_path: str,
-    compress_threshold: int = 1024,
-    compression_method: str = 'zlib',
-    minify_json: bool = True,
-    custom_ignore_patterns: List[str] = None
+    input_file: str,
+    output_file: str,
+    optimizer: Optional[OptimizedStorage] = None,
+    ignore_patterns: Optional[List[str]] = None,
+    show_stats: bool = False,
+    quiet: bool = False
 ) -> Dict[str, Any]:
     """
-    Process a captured API file and save an optimized version.
+    Process a capture file to optimize storage.
     
     Args:
-        input_path: Path to the input JSON file with captured APIs
-        output_path: Path where to save the optimized output
-        compress_threshold: Minimum response size in bytes to compress (0 = always compress)
-        compression_method: Compression method to use (zlib, gzip, base64, none)
-        minify_json: Whether to minify JSON responses
-        custom_ignore_patterns: Additional regex patterns for endpoints to ignore
+        input_file: Path to the input JSON file
+        output_file: Path to save the optimized output
+        optimizer: Configured OptimizedStorage instance (uses defaults if None)
+        ignore_patterns: List of regex patterns to ignore (overrides optimizer's patterns if provided)
+        show_stats: Whether to show detailed statistics
+        quiet: Suppress all non-error output
         
     Returns:
-        Dict with statistics about the optimization
+        Dictionary with processing statistics
     """
-    with open(input_path, 'r', encoding='utf-8') as f:
-        api_calls = json.load(f)
+    # Create default optimizer if none provided
+    if optimizer is None:
+        optimizer = OptimizedStorage()
     
-    # Initialize storage with custom settings
-    storage = OptimizedStorage(
-        compress_responses_larger_than=compress_threshold,
-        compression_method=CompressionMethod.from_string(compression_method),
-        minify_json=minify_json
-    )
+    # Override ignore patterns if explicitly provided
+    if ignore_patterns is not None:
+        optimizer.ignore_patterns = ignore_patterns
+        optimizer._compiled_ignore = [re.compile(p, re.IGNORECASE) for p in ignore_patterns]
+        optimizer.use_ignore_patterns = True
     
-    # Add custom ignore patterns if provided
-    if custom_ignore_patterns:
-        storage.ignore_patterns.extend(custom_ignore_patterns)
-        storage._compiled_patterns = [re.compile(p, re.IGNORECASE) for p in storage.ignore_patterns]
-    
-    # Track statistics
-    stats = {
-        'total_requests': len(api_calls),
-        'ignored_requests': 0,
-        'compressed_responses': 0,
-        'original_size': 0,
-        'compressed_size': 0,
-        'unique_responses': 0,
-        'start_time': None,
-        'end_time': None
-    }
-    
-    import time
-    stats['start_time'] = time.time()
-    
-    for idx, call in enumerate(api_calls):
-        try:
-            request = call.get('request', {})
-            response = call.get('response', {})
-            timestamp = call.get('timestamp', '')
+    # Load input data
+    try:
+        with open(input_file, 'r', encoding='utf-8') as f:
+            api_calls = json.load(f)
+        
+        if not isinstance(api_calls, list):
+            api_calls = [api_calls]  # Handle case where input is a single object
             
-            # Track original size
-            if 'body' in response and response['body'] is not None:
-                body = response['body']
-                if isinstance(body, (dict, list)):
-                    stats['original_size'] += len(json.dumps(body).encode('utf-8'))
-                else:
-                    stats['original_size'] += len(str(body).encode('utf-8'))
-            
-            # Process the request/response
-            if storage.add_request_response(request, response, timestamp, idx):
-                # Track compression
-                processed_response = next((r for r in storage.unique_responses.values() 
-                                        if r.get('_compression')), None)
-                if processed_response and '_compression' in processed_response:
-                    stats['compressed_responses'] += 1
-                    stats['compressed_size'] += processed_response['_compression']['compressed_length']
-            else:
-                stats['ignored_requests'] += 1
+        # Track statistics
+        stats = {
+            'total_requests': len(api_calls),
+            'ignored_requests': 0,
+            'compressed_responses': 0,
+            'original_size': 0,
+            'compressed_size': 0,
+            'unique_responses': 0,
+            'start_time': time.time(),
+            'end_time': None
+        }
+    
+        # Process each API call
+        processed_count = 0
+        for idx, call in enumerate(api_calls):
+            try:
+                if not isinstance(call, dict):
+                    if not quiet:
+                        print(f"Warning: Skipping non-dictionary item at index {idx}")
+                    continue
+                    
+                request = call.get('request', {})
+                response = call.get('response', {})
+                timestamp = call.get('timestamp', datetime.datetime.now().isoformat())
                 
-        except Exception as e:
-            print(f"Error processing API call {idx}: {e}")
-    
-    stats['end_time'] = time.time()
-    stats['unique_responses'] = len(storage.unique_responses)
-    stats['processing_time'] = stats['end_time'] - stats['start_time']
-    
-    if stats['original_size'] > 0:
-        stats['compression_ratio'] = stats['original_size'] / (stats['compressed_size'] or 1)
-    else:
-        stats['compression_ratio'] = 0
-    
-    # Save the optimized storage
-    storage.save_to_file(output_path)
-    
-    # Add output file info to stats
-    stats['output_file'] = output_path
-    stats['output_size'] = Path(output_path).stat().st_size if Path(output_path).exists() else 0
-    
-    return stats
+                if optimizer.add_request_response(request, response, timestamp, str(idx)):
+                    processed_count += 1
+                
+                # Update progress for large files
+                if not quiet and (idx + 1) % 100 == 0:
+                    print(f"Processed {idx + 1}/{len(api_calls)} requests...")
+                    
+            except Exception as e:
+                if not quiet:
+                    print(f"Error processing API call {idx}: {e}")
+                continue
+        
+        # Finalize statistics
+        stats['end_time'] = time.time()
+        stats['unique_responses'] = len(optimizer.unique_responses)
+        stats['processed_requests'] = processed_count
+        stats['ignored_requests'] = stats['total_requests'] - processed_count
+        
+        # Calculate compression ratio based on file sizes
+        input_size = os.path.getsize(input_file)
+        optimizer.save_to_file(output_file)
+        output_size = os.path.getsize(output_file)
+        
+        stats.update({
+            'original_size': input_size,
+            'compressed_size': output_size,
+            'compression_ratio': input_size / output_size if output_size > 0 else 0,
+            'output_file': output_file,
+            'output_size': output_size,
+            'processing_time': stats['end_time'] - stats['start_time']
+        })
+        
+        # Print summary if not in quiet mode
+        if not quiet:
+            print("\nOptimization complete!")
+            print(f"• Processed {stats['total_requests']} requests")
+            print(f"• Unique responses: {stats['unique_responses']}")
+            print(f"• Compression ratio: {stats['compression_ratio']:.2f}x")
+            print(f"• Original size: {stats['original_size'] / 1024:.2f} KB")
+            print(f"• Optimized size: {stats['compressed_size'] / 1024:.2f} KB")
+            print(f"• Saved: {(1 - (stats['compressed_size'] / stats['original_size'])) * 100:.1f}%")
+            print(f"• Time taken: {stats['processing_time']:.2f} seconds")
+        
+        return stats
+        
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in input file: {e}")
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"Input file not found: {input_file}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to process capture file: {e}")

@@ -39,7 +39,7 @@ ENV/
 .DS_Store
 
 # Project specific
-captured_apis.json
+# captured_apis.json
 .env
 output/
 examoles/

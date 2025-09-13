@@ -70,40 +70,165 @@ A powerful Python tool for intercepting, analyzing, and documenting API requests
 To start the scanner, use:
 
 ```bash
+### Basic Usage
+
+```bash
 # Basic usage with default settings (http://127.0.0.1:8080)
 api-scanner start example.com
 
-# Specify host and port (short form)
-api-scanner start -H 0.0.0.0 -p 8888 example.com
-
-# Specify host and port (long form)
+# With specific host and port
 api-scanner start --host 0.0.0.0 --port 8888 example.com
 
-# Use combined host:port format
+# Using combined host:port format
 api-scanner start --bind 0.0.0.0:8888 example.com
+```
 
+### UI Filtering
+
+```bash
+# Use ignore_ui setting from config (default: true if not specified)
+api-scanner start example.com
+
+# Explicitly ignore UI assets (HTML, CSS, JS, etc.)
+api-scanner start --ignore-ui example.com
+
+# Include UI assets in capture
+api-scanner start --no-ignore-ui example.com
+```
+
+### Output and Logging
+
+```bash
 # Save output to a specific file
 api-scanner start example.com -o output.json
 
-# Disable SSL verification (for testing only)
-api-scanner start -k example.com
-# or
-api-scanner start --no-ssl-verify example.com
-
-# Enable verbose logging
-api-scanner start -v example.com
-
-# or set specific log level
+# Set log level (DEBUG, INFO, WARNING, ERROR)
 api-scanner start --log-level DEBUG example.com
 
+# Enable verbose output (same as --log-level DEBUG)
+api-scanner start -v example.com
+```
+
+### SSL and Security
+
+```bash
+# Disable SSL verification (for testing only)
+api-scanner start --no-ssl-verify example.com
+
+# Short form
+api-scanner start -k example.com
+```
+
+### Domain Filtering
+
+#### Basic Usage
+```bash
+# Capture all traffic (no domain filtering)
+api-scanner start
+
+# Explicitly capture all traffic (same as above)
+api-scanner start --all
+
+# Single domain (only capture requests to this domain)
+api-scanner start example.com
+
+# Multiple domains (space-separated)
+api-scanner start example.com api.example.com
+
 # Block specific domains
-api-scanner start --block analytics.example.com example.com
+api-scanner start example.com --block analytics.example.com
 
-# Use a blocklist file
-api-scanner start --block-file blocklist.txt example.com
+# Block multiple domains
+api-scanner start example.com --block analytics.example.com ads.example.com
 
-# Filter specific API paths
-api-scanner start --filter /api/ example.com
+# Block domains from a file (one per line)
+api-scanner start example.com --block-file blocked_domains.txt
+```
+
+#### Filtering UI Assets
+
+By default, the scanner captures all HTTP responses including HTML pages, images, CSS, and JavaScript files. 
+
+Use the `--ignore-ui` flag to filter out:
+- HTML responses (all `text/html` content)
+- Common web assets (images, CSS, JavaScript, fonts)
+- Other non-API responses
+
+```bash
+# Ignore UI assets (HTML pages, images, CSS, JS, etc.)
+# Only API responses will be captured
+api-scanner start --ignore-ui example.com
+
+# Include all responses including UI assets (default)
+# Captures everything - HTML pages, images, CSS, JS, and API responses
+api-scanner start --no-ignore-ui example.com
+
+# Example: Capture only API responses from all domains
+api-scanner start --ignore-ui
+```
+
+**Note:** When `--ignore-ui` is enabled, the scanner will only capture:
+- JSON/XML responses
+- API-like endpoints (typically containing `/api/` in the path)
+- Other non-UI responses
+
+This is useful when you only want to analyze API traffic and exclude web page content.
+
+#### Configuration File Settings
+
+You can also configure UI filtering in `config.json`:
+
+```json
+"filters": {
+    "ignore_ui": true,
+    "excluded_extensions": [
+        ".js", ".css", ".png", ".jpg", 
+        ".jpeg", ".gif", ".svg", ".ico"
+        // ... other extensions
+    ],
+    "excluded_paths": [
+        "/static/", "/assets/", "/images/"
+    ]
+}
+```
+
+- `ignore_ui`: Set to `true` to enable UI filtering (default: `true`)
+- `excluded_extensions`: File extensions to exclude when UI filtering is enabled
+- `excluded_paths`: URL paths to exclude when UI filtering is enabled
+
+Note: Command-line flags will override these settings.
+
+### Output and Logging
+```bash
+# Save output to a specific file
+api-scanner start -o output.json example.com
+
+# Set log level
+api-scanner start --log-level DEBUG example.com
+
+# Enable verbose output (same as --log-level DEBUG)
+api-scanner start -v example.com
+```
+
+### SSL and Proxy Settings
+```bash
+# Disable SSL verification (for testing only)
+api-scanner start -k example.com
+
+# Custom proxy host and port
+api-scanner start -H 0.0.0.0 -p 8888 example.com
+
+# Using host:port format
+api-scanner start --bind 0.0.0.0:8888 example.com
+```
+
+#### Filter File Format
+Example `allowed_domains.txt`:
+```
+# Comments are allowed
+example.com
+api.example.com
+*.staging.example.com  # Wildcards are supported
 ```
 
 For development, you can also run the module directly:
@@ -152,20 +277,127 @@ Create a text file with patterns to exclude from optimization:
 
 ## ⚙️ Configuration
 
+### Required Configuration Files
+
+You must have both of these files in the `config` directory for the scanner to work:
+
+1. **filter.txt** - Contains API path patterns to include (one per line)
+   - Location: `src/api_scanner/config/filter.txt`
+   - This file is required and contains the main API path patterns
+
+2. **filter_rules.json** - Contains detailed filtering rules and settings
+   - Location: `src/api_scanner/config/filter_rules.json`
+   - This file is required and contains additional filtering configurations
+
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `API_SCANNER_HOST` | Default proxy host | `127.0.0.1` |
-| `API_SCANNER_PORT` | Default proxy port | `8080` |
-| `API_SCANNER_OUTPUT` | Default output file | `captured_apis.json` |
-| `API_SCANNER_SSL_VERIFY` | Verify SSL certs | `1` |
+You can customize the scanner's behavior using these environment variables:
 
-### Config File
+## 📋 Configuration
 
-Create `config.ini` in your working directory:
+The scanner can be configured using a config file (`config/config.json`) or environment variables.
 
-```ini
+### Configuration Options
+
+```json
+{
+  "proxy": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "ssl_verify": true
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  },
+  "output": {
+    "directory": "output",
+    "filename": "captured_apis.json",
+    "pretty_print": true
+  },
+  "filters": {
+    "ignore_ui": true,
+    "allowed_hosts": [],
+    "excluded_extensions": [
+      ".js", ".css", ".png", ".jpg", ".jpeg", ".gif"
+    ],
+    "excluded_paths": [
+      "/static/", "/assets/", "/images/"
+    ]
+  }
+}
+```
+
+### Environment Variables
+
+All configuration options can be overridden with environment variables:
+
+```bash
+# Proxy settings
+export API_SCANNER_PROXY_HOST=0.0.0.0
+export API_SCANNER_PROXY_PORT=8888
+export API_SCANNER_SSL_VERIFY=false
+
+# Output settings
+export API_SCANNER_OUTPUT_DIRECTORY=./results
+export API_SCANNER_OUTPUT_FILENAME=my_apis.json
+
+# Filtering
+export API_SCANNER_IGNORE_UI=true
+export API_SCANNER_ALLOWED_HOSTS="api.example.com,example.org"
+
+# Logging
+export API_SCANNER_LOG_LEVEL=DEBUG
+```
+
+### Command Line Arguments
+
+All configuration options can also be set via command line arguments. Run `api-scanner --help` for a complete list.
+
+### filter.txt Format
+
+This file defines which API paths should be captured. Each line should be a URL path pattern.
+
+Example `filter.txt`:
+```
+# API endpoints
+/api/
+/v1/
+/rest/
+/auth/
+
+# Specific endpoints
+/user/
+/account/
+/data/
+```
+
+### filter_rules.json
+
+This file contains additional filtering rules and settings. Here's the default structure:
+
+```json
+{
+  "excluded_extensions": [
+    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", 
+    ".svg", ".ico", ".woff", ".woff2", ".ttf"
+  ],
+  "excluded_paths": [
+    "/static/", "/assets/", "/public/", "/resources/",
+    "/images/", "/img/", "/css/", "/js/", "/fonts/"
+  ],
+  "api_keywords": [
+    "api", "v1", "v2", "rest", "graphql", "soap"
+  ],
+  "content_types": [
+    "application/json", 
+    "application/xml"
+  ],
+  "accept_headers": [
+    "application/json", 
+    "application/xml"
+  ]
+}
 [api_scanner]
 host = 0.0.0.0
 port = 8080

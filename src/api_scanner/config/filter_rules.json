@@ -1,0 +1,38 @@
+{
+  "excluded_extensions": [
+    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+    ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp", ".mp4", ".mp3",
+    ".wav", ".ogg", ".pdf", ".zip", ".gz", ".tar", ".rar", ".7z"
+  ],
+  "excluded_paths": [
+    "/static/", "/assets/", "/public/", "/resources/",
+    "/images/", "/img/", "/css/", "/js/", "/fonts/",
+    "/vendor/", "/node_modules/", "/bower_components/"
+  ],
+  "api_keywords": [
+    "api", "v1", "v2", "v3", "rest", "graphql", "soap", "rpc", "grpc", "jsonrpc",
+    "auth", "token", "login", "register", "user", "users", "account", "data",
+    "dataset", "resources", "records", "items", "entities", "objects", "search",
+    "query", "report", "export", "import", "service", "service-api", "service_api", "api_service"
+  ],
+  "api_paths": [
+    "/api/", "/v1/", "/v2/", "/v3/", "/rest/", "/graphql", "/rpc/", "/grpc/",
+    "/auth/", "/token", "/login", "/register", "/user/", "/users/", "/account/",
+    "/data/", "/dataset/", "/resources/", "/records/", "/items/", "/entities/",
+    "/objects/", "/search", "/query", "/report", "/export", "/import",
+    "/service/", "/service-api/", "/backend/", "/internal/", "/external/", "main-live-feed/"
+  ],
+  "content_types": [
+    "application/json", 
+    "application/xml", 
+    "application/x-www-form-urlencoded",
+    "application/grpc",
+    "application/grpc+proto"
+  ],
+  "accept_headers": [
+    "application/json",
+    "application/xml",
+    "application/grpc",
+    "application/grpc+proto"
+  ]
+}

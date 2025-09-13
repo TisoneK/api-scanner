@@ -62,5 +62,8 @@ OUTPUT_FILE = OUTPUT_DIR / config["output"]["filename"]
 LOG_LEVEL = config["logging"]["level"]
 ALLOWED_HOSTS = set(config.get("filters", {}).get("allowed_hosts", []))
 
+# Constants
+MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB
+
 # Ensure output directory exists
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

@@ -1,24 +1,30 @@
 {
     "proxy": {
         "host": "127.0.0.1",
-        "port": 8080
+        "port": 8080,
+        "ssl_verify": true
     },
     "logging": {
         "level": "INFO",
         "max_file_size_mb": 10,
-        "backup_count": 5
+        "backup_count": 5,
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     },
     "output": {
         "directory": "output",
-        "filename": "captured_apis.json"
+        "filename": "captured_apis.json",
+        "pretty_print": true,
+        "timestamp_format": "%Y-%m-%dT%H:%M:%S.%f"
     },
     "filters": {
+        "allowed_hosts": [],
+        "ignore_ui": true,
         "excluded_extensions": [
             ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", 
             ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp", ".avif", 
             ".mp4", ".webm", ".mp3", ".wav", ".ogg", ".pdf", ".zip", 
             ".gz", ".tar", ".rar", ".7z", ".exe", ".dmg", ".pkg", 
-            ".deb", ".rpm", ".msi", ".apk", ".app", ".dll", ".so", 
+            ".deb", ".rpm", ".msi", ".apk", ".iso", ".dll", ".so", 
             ".dylib", ".py", ".pyc", ".pyo", ".pyd", ".c", ".cpp", 
             ".h", ".java", ".class", ".html", ".htm", ".php", ".asp", 
             ".aspx", ".jsp", ".json", ".xml", ".txt"

@@ -4,11 +4,13 @@ Configuration module for API Scanner.
 from .config import (
     load_config, config,
     PROXY_HOST, PROXY_PORT, SSL_VERIFY,
-    OUTPUT_DIR, OUTPUT_FILE, LOG_LEVEL
+    OUTPUT_DIR, OUTPUT_FILE, LOG_LEVEL,
+    ALLOWED_HOSTS
 )
 from .filters import (
     EXCLUDED_EXTENSIONS, EXCLUDED_PATHS, FILTER_KEYWORDS,
-    load_filter_keywords
+    API_PATHS, CONTENT_TYPES, ACCEPT_HEADERS,
+    load_filter_config, FILTER_CONFIG
 )
 
 # For backward compatibility
@@ -19,9 +21,13 @@ __all__ = [
     'load_config', 'config',
     'PROXY_HOST', 'PROXY_PORT', 'SSL_VERIFY',
     'OUTPUT_DIR', 'OUTPUT_FILE', 'LOG_LEVEL',
-    'MAX_CONTENT_LENGTH',
+    'ALLOWED_HOSTS',
     
     # From filters.py
     'EXCLUDED_EXTENSIONS', 'EXCLUDED_PATHS', 'FILTER_KEYWORDS',
-    'load_filter_keywords'
+    'API_PATHS', 'CONTENT_TYPES', 'ACCEPT_HEADERS',
+    'load_filter_config', 'FILTER_CONFIG',
+    
+    # Constants
+    'MAX_CONTENT_LENGTH'
 ]

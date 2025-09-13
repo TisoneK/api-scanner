@@ -17,27 +17,41 @@ Example usage:
     ...     print(f"{call.request.method} {call.request.url} -> {call.response.status_code if call.response else 'No response'}")
 """
 
-from .version import __version__
-from .core import ApiSniffer
-from .cli import main
+__version__ = '0.1.0'
+
+# Initialize configuration
 from .config import (
+    load_config, config,
     PROXY_HOST, PROXY_PORT, SSL_VERIFY,
     OUTPUT_FILE, OUTPUT_DIR, LOG_LEVEL, MAX_CONTENT_LENGTH,
-    EXCLUDED_EXTENSIONS, EXCLUDED_PATHS, FILTER_KEYWORDS
+    EXCLUDED_EXTENSIONS, EXCLUDED_PATHS, FILTER_KEYWORDS,
+    API_PATHS, CONTENT_TYPES, ACCEPT_HEADERS, ALLOWED_HOSTS
 )
-from .models import ApiCall, RequestData, ResponseData
-__all__ = [
-    # Main class
-    'ApiSniffer',
+
+# Import core functionality
+try:
+    from .core import ApiSniffer
+    from .cli import main
+    from .models import ApiCall, RequestData, ResponseData
     
-    # Data models
-    'ApiCall', 'RequestData', 'ResponseData',
+    __all__ = [
+        # Main class
+        'ApiSniffer',
+        
+        # Data models
+        'ApiCall', 'RequestData', 'ResponseData',
+        
+        # CLI
+        'main',
+        
+        # Configuration
+        'OUTPUT_FILE', 'OUTPUT_DIR', 'LOG_LEVEL',
+        'PROXY_HOST', 'PROXY_PORT', 'SSL_VERIFY',
+        'EXCLUDED_EXTENSIONS', 'EXCLUDED_PATHS', 'FILTER_KEYWORDS',
+        'API_PATHS', 'CONTENT_TYPES', 'ACCEPT_HEADERS', 'ALLOWED_HOSTS'
+    ]
     
-    # CLI
-    'main',
-    
-    # Configuration
-    'OUTPUT_FILE', 'OUTPUT_DIR', 'LOG_LEVEL',
-    'PROXY_HOST', 'PROXY_PORT', 'SSL_VERIFY',
-    'EXCLUDED_EXTENSIONS', 'EXCLUDED_PATHS', 'FILTER_KEYWORDS'
-]
+except ImportError as e:
+    import logging
+    logging.error(f"Failed to import API Scanner: {e}")
+    __all__ = []
